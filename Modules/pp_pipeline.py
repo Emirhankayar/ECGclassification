@@ -2,14 +2,13 @@ import csv
 import h5py
 import shutil
 import zipfile
+import sklearn
 import openpyxl
 import constants
 import collections
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
-import sklearn.preprocessing
-import sklearn.model_selection
 
 
 def unzip_file(zip_filepath, output_dir):
