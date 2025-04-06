@@ -104,13 +104,6 @@ def check_dataset(directory=constants.DATA_TEMP):
                 print(f"\n[ !! ] No patient files found in {class_label}")
                 continue
             print(f"\n[ OK ] Patient files exists.")
-            """            
-            for patient_file in tqdm(
-                patient_files, desc=f"[    ] Processing {class_label}", unit="file"
-            ):
-                filename = patient_file.stem
-                seen_files[filename].append(class_label)
-            """
 
             first_file = patient_files[0]
             with h5py.File(first_file, "r") as f:
