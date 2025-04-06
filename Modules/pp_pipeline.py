@@ -15,9 +15,9 @@ def unzip_file(zip_filepath, output_dir):
     with zipfile.ZipFile(zip_filepath, "r") as zip_ref:
         files = zip_ref.namelist()
 
-        for file in tqdm(files, desc="Unzipping content...", unit="file"):
+        for file in tqdm(files, desc="[    ] Unzipping content... ", unit="file"):
             zip_ref.extract(file, output_dir)
-    print(f"\n Extracted all files to {output_dir}")
+    print(f"\n[ XX ] Extracted all files to {output_dir}")
 
 
 def read_xlsx(file_path):
@@ -28,7 +28,7 @@ def read_xlsx(file_path):
     header = {col: idx for idx, col in enumerate(next(ws.iter_rows(values_only=True)))}
 
     for row in tqdm(
-        ws.iter_rows(values_only=True), desc="Reading Excel data...", unit="row"
+        ws.iter_rows(values_only=True), desc="[    ] Reading Excel data... ", unit="row"
     ):
         if row[header["FileName"]] and row[header["Rhythm"]]:
             patient_id = row[header["FileName"]]
@@ -39,7 +39,7 @@ def read_xlsx(file_path):
                 target = label_encoder.transform([mapped_rhythm])[0]
                 patient_dict[patient_id] = target
 
-    print(f"\n Total patient entries loaded: {len(patient_dict)}")
+    print(f"\n[ XX ] Total patient entries loaded: {len(patient_dict)}")
 
     wb.close()
     return patient_dict
@@ -56,7 +56,9 @@ def save_patient_hdf5(patient_id, sequences, target_class):
 
 def read_csv(directory, patient_dict):
     for file in tqdm(
-        Path(directory).glob("*.csv"), desc="Processing CSV files...", unit="file"
+        Path(directory).glob("*.csv"),
+        desc="[    ] Processing CSV files...",
+        unit="file",
     ):
         filename = file.stem
 
@@ -79,50 +81,54 @@ def read_csv(directory, patient_dict):
                 sequences = np.array(sequences, dtype=np.float32)
                 if not np.isnan(sequences).any():
                     save_patient_hdf5(filename, sequences, target_class)
+    print(f"\n[ XX ] Processed all CSV files.")
 
 
 def check_dataset(directory=constants.DATA_TEMP):
     dataset_dir = Path(directory)
-
+    print(f"\n[ ?? ] Checking dataset for corruption...")
     if not dataset_dir.exists():
-        print("\n Dataset directory not found!")
+        print("\n[ !! ] Dataset directory not found!")
         return
+    print(f"\n[ OK ] Dataset directory exists.")
 
     seen_files = collections.defaultdict(list)
 
     for class_dir in sorted(dataset_dir.iterdir()):
         if class_dir.is_dir():
             class_label = class_dir.stem
-            print(f"\n Checking class: {class_label}")
+            # print(f"\n[    ] Checking class: {class_label}")
 
             patient_files = list(class_dir.glob("*.h5"))
             if not patient_files:
-                print(f"\n No patient files found in {class_label}")
+                print(f"\n[ !! ] No patient files found in {class_label}")
                 continue
-
+            print(f"\n[ OK ] Patient files exists.")
+            """            
             for patient_file in tqdm(
-                patient_files, desc=f"Processing {class_label}", unit="file"
+                patient_files, desc=f"[    ] Processing {class_label}", unit="file"
             ):
                 filename = patient_file.stem
                 seen_files[filename].append(class_label)
+            """
 
             first_file = patient_files[0]
             with h5py.File(first_file, "r") as f:
                 if "sequences" in f:
                     sequences = f["sequences"][:]
-
                     if sequences.shape != (5000, 12):
-                        print("\n Data shape is incorrect! Expected (5000, 12)")
+                        print("\n[ !! ] Data shape is incorrect! Expected (5000, 12)")
                 else:
-                    print(f"\n Missing 'sequences' dataset in {first_file.stem}")
+                    print(f"\n[ !! ] Missing 'sequences' dataset in {first_file.stem}")
+                print(f"\n[ OK ] Correct data shape, no missing sequences.")
 
     duplicates = {k: v for k, v in seen_files.items() if len(v) > 1}
     if duplicates:
-        print("\n Duplicate Files Found!")
+        print("\n[ !! ] Duplicate Files Found!")
         for filename, classes in duplicates.items():
             print(f" - {filename} appears in: {', '.join(classes)}")
     else:
-        print("\n No duplicate filenames found across directories.")
+        print("\n[ OK ] No duplicate filenames found across directories.")
 
 
 def bin_array(data, window_size=constants.WINDOW_SIZE):
@@ -136,6 +142,7 @@ def bin_array(data, window_size=constants.WINDOW_SIZE):
 
 
 def pp_dataset(directory=constants.DATA_TEMP, output_directory=constants.DATASET):
+    print(f"\n[    ] Splitting train, val, test...")
     dataset_dir = Path(directory)
     output_dir = Path(output_directory)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -163,11 +170,17 @@ def pp_dataset(directory=constants.DATA_TEMP, output_directory=constants.DATASET
     X_val, X_test, y_val, y_test = sklearn.model_selection.train_test_split(
         X_temp, y_temp, test_size=0.25, random_state=42, stratify=y_temp
     )
+    print(f"\n[ XX ] Split done.")
 
     def process_and_save(files, labels, split, scaler=None):
+        print(
+            f"\n[    ] Binning data... Expected Shape : {5000//constants.WINDOW_SIZE, 12}"
+        )
+        print(f"\n[    ] Scaling data...")
         for file, label in tqdm(
-            zip(files, labels), desc=f"Processing {split} files", unit="file"
+            zip(files, labels), desc=f"[    ] Preprocessing {split} files", unit="file"
         ):
+
             with h5py.File(file, "r") as f:
                 if "sequences" in f:
                     sequences = f["sequences"][:]
@@ -189,7 +202,9 @@ def pp_dataset(directory=constants.DATA_TEMP, output_directory=constants.DATASET
                     with h5py.File(save_path, "w") as f_out:
                         f_out.create_dataset("sequences", data=sequences)
                 else:
-                    print(f"\n Missing 'sequences' dataset in {file.stem}")
+                    print(f"\n[ !! ] Missing 'sequences' dataset in {file.stem}")
+        print(f"\n[ XX ] Binning done.")
+        print(f"\n[ XX ] Scaling done.")
         return scaler
 
     scaler = None
@@ -198,21 +213,26 @@ def pp_dataset(directory=constants.DATA_TEMP, output_directory=constants.DATASET
     scaler = process_and_save(X_test, y_test, "test", scaler)
 
 
-def rm_dir(directory: Path):
-    if directory.exists() and directory.is_dir():
-        print(f"\n Deleting directory: {directory}")
-        shutil.rmtree(directory)
-    else:
-        print(f"\n Directory {directory} not found.")
+def rm_dirs(directories: list[Path]):
+    for directory in directories:
+        if directory.exists() and directory.is_dir():
+            print(f"\n[ ii ] Deleting directory: {directory}")
+            shutil.rmtree(directory)
+        else:
+            print(f"\n[ !! ] Directory {directory} not found.")
+
+
+def get_dir_size(path):
+    return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())
 
 
 if __name__ == "__main__":
-    print("\n Initializing data preprocessing module...")
+    print("\n[ ii ] Initializing data preprocessing module...")
 
     with zipfile.ZipFile(constants.ZIP_PATH, "r") as zip_ref:
-        print("\n Extracting...")
+        print("\n[    ] Extracting Data...")
         zip_ref.extractall()
-        print("\n Extracted all raw data.")
+        print("\n[ XX ] Extracted all raw data.")
 
     rhythm_mapping = {
         "AFIB": "AFIB",
@@ -237,9 +257,18 @@ if __name__ == "__main__":
     read_csv(constants.CSV_PATH, patient_dict)
     check_dataset(constants.DATA_TEMP)
     pp_dataset(constants.DATA_TEMP, constants.DATASET)
-    rm_dir(constants.DATA_TEMP)
+    dirs_to_delete = [
+        constants.DATA_TEMP,
+        constants.CSV_PATH,
+        constants.ZIP_CONTENT,
+    ]
+
+    rm_dirs(dirs_to_delete)
+    size = get_dir_size("Data")
+
     print(
-        f"\n Preprocessing succesfully finished... \
-        \n\n(#_samples,{constants.WINDOW_SIZE},12) is the final data shape.\
-        \n\nIf there is a mistake modify the 'WINDOW_SIZE' variable in constants.py."
+        f"\n[ OK ] Preprocessing succesfully finished! \
+        \n\n[ ?? ] (#_samples,{5000//constants.WINDOW_SIZE},12) is the final data shape.\
+        \n\n[ ?? ] If there is a mistake modify the 'WINDOW_SIZE' variable in constants.py."
     )
+    print(f"\n[ ?? ] Size of the final directory: {size / (1024 ** 2):.2f} MB")
