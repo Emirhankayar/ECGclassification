@@ -1,8 +1,10 @@
+import os
 import time
-import h5py
 import shutil
 import zipfile
 import sklearn
+import sklearn.model_selection
+import sklearn.preprocessing
 import constants
 import concurrent
 import numpy as np
@@ -13,8 +15,6 @@ from pathlib import Path
 
 class DatasetProcessor:
     def __init__(self):
-        self.label_encoder = sklearn.preprocessing.LabelEncoder()
-        self.rhythm_mapping = constants.RHYTHM_MAPPING
         self.patient_dict = {}
         self._initialize()
 
@@ -23,15 +23,13 @@ class DatasetProcessor:
         print(
             f"\n\n[ ?? ] (#_samples,{5000//constants.WINDOW_SIZE},12) is the final data shape."
         )
-        encoded_classes = list(self.rhythm_mapping.values())
-        self.label_encoder.fit(encoded_classes)
 
     def _extract(self, input_dir, output_dir):
 
         try:
             with zipfile.ZipFile(input_dir, "r") as zip_ref:
                 files = zip_ref.namelist()
-                tqdm.write(f"\n[ >> ] Preparing to unzip {len(files)} files...")
+                print(f"\n[ >> ] Preparing to unzip {len(files)} files...")
 
                 pbar = tqdm(
                     total=len(files), desc="[    ] Unzipping content... ", unit="file"
@@ -41,73 +39,138 @@ class DatasetProcessor:
                     zip_ref.extract(file, output_dir)
                     pbar.update(1)
 
-                with concurrent.futures.ThreadPoolExecutor() as executor:
+                with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as executor:
                     executor.map(extract_file, files)
 
-            tqdm.write(f"\n[ XX ] Extracted all files to {output_dir}")
-            time.sleep(5)
-
         except FileNotFoundError:
-            tqdm.write(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+            print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
         except zipfile.BadZipFile:
-            tqdm.write(
-                f"\n[ !! ] Error: The file '{input_dir}' is not a valid zip file."
-            )
+            print(f"\n[ !! ] Error: The file '{input_dir}' is not a valid zip file.")
         except Exception as e:
-            tqdm.write(f"\n[ !! ] An error occurred while extracting the files: {e}")
+            print(f"\n[ !! ] An error occurred while extracting the files: {e}")
 
     def read_xlsx(self, input_dir):
+        """
+        Step 1: Read Excel and map values to Rhythm.
+        Step 2: Match filenames with CSV files in directory.
+        Step 3: Create /0, /1, /2, /3 directories.
+        Step 4: Move files to respective directories based on Rhythm.
+        """
         try:
-            print(f"\n[ ii ] Reading file : {input_dir}")
-            df = pd.read_excel(
-                input_dir, engine="openpyxl", usecols=["FileName", "Rhythm"]
+            if not input_dir.exists():
+                print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+                return
+
+            df = pd.read_excel(input_dir, usecols=["FileName", "Rhythm"])
+            df["Rhythm"] = df["Rhythm"].replace(
+                {
+                    "AF": 0,
+                    "AFIB": 0,
+                    "SVT": 1,
+                    "AT": 1,
+                    "SAAWR": 1,
+                    "ST": 1,
+                    "AVNRT": 1,
+                    "AVRT": 1,
+                    "SB": 2,
+                    "SA": 3,
+                    "SR": 3,
+                }
             )
 
-            df["Mapped_Rhythm"] = df["Rhythm"].map(self.rhythm_mapping)
-            df = df.dropna(subset=["Mapped_Rhythm"])
-            df["Target"] = self.label_encoder.transform(df["Mapped_Rhythm"])
-            df["Target"] = df["Target"].astype("int32")
+            print(df["Rhythm"].unique())
 
-            self.patient_dict = df.set_index("FileName")["Target"].to_dict()
+            for i in range(4):
+                (constants.DATASET / str(i)).mkdir(parents=True, exist_ok=True)
 
-            print(f"\n[ XX ] Total patient entries loaded: {len(self.patient_dict)}")
-        except FileNotFoundError:
-            print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+            patient_files = list(constants.CSV_PATH.glob("*.csv"))
+            patient_map = {f.stem: f for f in patient_files}
+
+            def move_file(row):
+                file_name = row["FileName"]
+                rhythm = row["Rhythm"]
+                if file_name in patient_map:
+                    file_path = patient_map[file_name]
+                    target_dir = constants.DATASET / str(rhythm)
+                    destination = target_dir / file_path.name
+                    file_path.rename(destination)
+                    print(f"Moved {file_path.name} to {target_dir}")
+                else:
+                    print(f"File {file_name} not found.")
+
+            with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as executor:
+                executor.map(move_file, [row for _, row in df.iterrows()])
+
+            moved_files = {
+                f.stem
+                for i in range(4)
+                for f in (constants.DATASET / str(i)).glob("*.csv")
+            }
+
+            expected_files = set(df["FileName"].astype(str))
+            missing_after_move = sorted(expected_files - moved_files)
+
+            if missing_after_move:
+                print(
+                    f"\n[ !! ] {len(missing_after_move)} file(s) NOT found after move:"
+                )
+                for file in missing_after_move:
+                    print(f" - {file}.csv")
+            else:
+                print(
+                    "\n[ OK ] All expected files successfully moved to dataset subdirectories."
+                )
         except Exception as e:
-            print(f"\n[ !! ] An error occurred: {e}")
+            print(f"Some error occurred: {e}")
 
-    def read_csv(self, input_dir):
+    def split_dataset(self, input_dir):
         try:
-            print(f"\n[ ii ] Reading all files at {input_dir}")
-            files = list(Path(input_dir).glob("*.csv"))
+            class_dirs = [input_dir / str(i) for i in range(4)]
 
-            def process_file(file):
-                filename = file.stem
-                if filename in self.patient_dict:
-                    target_class = self.patient_dict[filename]
-                    df = pd.read_csv(file, header=None)
-                    df = df.to_numpy(dtype=np.float32)
-                    sequences = self.bin_array(df, constants.WINDOW_SIZE)
-                    if (
-                        sequences.shape[1] == 12
-                        and sequences.shape[0] == 5000 // constants.WINDOW_SIZE
-                    ):
-                        if not np.isnan(sequences).any():
-                            file_path = (
-                                constants.DATA_TEMP
-                                / str(target_class)
-                                / f"{filename}.h5"
-                            )
-                            self.save_hdf5(file_path, sequences)
+            for split in ["train", "val", "test"]:
+                for i in range(4):
+                    target_dir = input_dir / split / str(i)
+                    target_dir.mkdir(parents=True, exist_ok=True)
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                executor.map(process_file, files)
+            for class_dir in class_dirs:
+                label = class_dir.name
+                files = list(class_dir.glob("*.csv"))
 
-            print(f"\n[ XX ] All data is processed and saved.")
-        except FileNotFoundError:
-            print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+                if not files:
+                    print(f"\n[ !! ] No files found in {class_dir}")
+                    continue
+
+                train_files, temp_files = sklearn.model_selection.train_test_split(
+                    files, test_size=0.3, random_state=42
+                )
+                val_files, test_files = sklearn.model_selection.train_test_split(
+                    temp_files, test_size=0.5, random_state=42
+                )
+
+                splits = {
+                    "train": train_files,
+                    "val": val_files,
+                    "test": test_files,
+                }
+
+                for split, file_list in splits.items():
+                    for file_path in file_list:
+                        dest = input_dir / split / label / file_path.name
+                        file_path.rename(dest)
+                        # print(f"Moved {file_path.name} to {dest}")
+
+                print(
+                    f"\n[ OK ] Split done for class {label}: "
+                    f"{len(train_files)} train, {len(val_files)} val, {len(test_files)} test"
+                )
+
+                for directory in Path(constants.DATASET).iterdir():
+                    if directory.exists() and directory.is_dir():
+                        if not any(directory.iterdir()):
+                            directory.rmdir()
+
         except Exception as e:
-            print(f"\n[ !! ] An error occurred: {e}")
+            print(f"\n[ !! ] Error in proc_dataset: {e}")
 
     def bin_array(self, data, window_size):
         sequence_length, num_channels = data.shape
@@ -117,146 +180,72 @@ class DatasetProcessor:
         )
         return np.mean(reshaped, axis=1)
 
-    def save_hdf5(self, file_path, sequences):
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with h5py.File(file_path, "w") as f:
-            f.create_dataset("X", data=sequences)
+    def proc_dataset(self, input_dir):
+        """
+        - read files
+        - make sure float 32 sequences
+        - bin sequences // constants.WINDOW_SIZE
+        - shape check if not shape then eliminate
+        - make sure no flats max - min th, directly = 0 check
+        - apply minmax scaling
+        - while continue also rm the skipped files
+        - save all the preprocessed files back to where they belong.
 
-        print(f"[ OK ] Saved {file_path.name}")
-
-    def preprocess_files(self, file, scaler, output_dir):
+        """
         try:
-            with h5py.File(file, "r+") as f:  # 'r+' allows overwriting
-                if "X" in f:
-                    X = f["X"][:]
-                    # y = f["y"][()]
-                    # y = y.astype("int32")
+            files = list(Path(input_dir).rglob("*.csv"))
+            scaler = sklearn.preprocessing.MinMaxScaler()
 
-                    if (
-                        X.shape[1] == 12
-                        and X.shape[0] == 5000 // constants.WINDOW_SIZE
-                        and X.dtype == "float32"
-                        and not np.isnan(X).any()
-                    ):
+            for file_path in files:
+                data = pd.read_csv(file_path, header=None).astype(np.float32).values
+                p = data.shape  # temporary variable for later
 
-                        reshaped = X.reshape(-1, X.shape[-1])
-                        scaled = scaler.transform(reshaped)
-                        X = scaled.reshape(X.shape)
-                        # Check for flatlines
-                        X_list = []
-                        threshold = 0.2
-                        for s in X:
-                            if (
-                                not np.all(s == s[0])
-                                or np.max(s) - np.min(s) < threshold
-                            ):
-                                X_list.append(s)
-                        if len(X_list) == 0:
-                            print(
-                                f"[ !! ] All sequences flat in {file.name}, skipping..."
-                            )
-                            return
+                if data.size == 0:
+                    print(f"[ !! ] Skipping {file_path.name}: Empty file")
+                    file_path.unlink(missing_ok=True)
+                    continue
+                data = self.bin_array(data, constants.WINDOW_SIZE)  # BINNING
 
-                        X = np.stack(X_list)
-                        # Overwrite the dataset
-                        del f["X"]
-                        #                        del f["y"]
-
-                        f.create_dataset("X", data=X.astype("float32"))
-                        #                        f.create_dataset("y", data=y.astype("int32"))
-
-                        print(f"[ OK ] Preprocessed {file.name}")
-                    else:
-                        print(f"\n[ !! ] Shape or dtype mismatch in {file.name}")
-                else:
-                    print(f"\n[ !! ] Expected datasets not found in {file.name}")
-        except Exception as e:
-            print(f"\n[ !! ] Failed to read/write {file.name}: {e}")
-
-    def preprocess_data(self, input_dir, output_dir):
-        files = list(input_dir.rglob("*.h5"))
-        file_class_pairs = [(file, file.parent.name) for file in files]
-
-        if not output_dir.exists():
-            output_dir.mkdir(parents=True, exist_ok=True)
-        for split in ["train", "val", "test"]:
-            (output_dir / split).mkdir(exist_ok=True)
-
-        file_paths, class_labels = zip(*file_class_pairs)
-        train_files, temp_files, train_labels, temp_labels = (
-            sklearn.model_selection.train_test_split(
-                file_paths,
-                class_labels,
-                test_size=0.30,
-                stratify=class_labels,
-                random_state=42,
-            )
-        )
-        val_files, test_files, val_labels, test_labels = (
-            sklearn.model_selection.train_test_split(
-                temp_files,
-                temp_labels,
-                test_size=0.50,
-                stratify=temp_labels,
-                random_state=42,
-            )
-        )
-        split_map = {
-            "train": list(zip(train_files, train_labels)),
-            "val": list(zip(val_files, val_labels)),
-            "test": list(zip(test_files, test_labels)),
-        }
-
-        for split, items in split_map.items():
-            print(f"\n[ >> ] Copying {len(items)} files to '{split}' directory...")
-            for file, label in items:
-                class_dir = output_dir / split / label
-                class_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy(file, class_dir / file.name)
-
-                try:
-                    shutil.copy(file, class_dir / file.name)
-                except Exception as e:
+                if data.size == 0 or np.isnan(data).any():
                     print(
-                        f"\n[ !! ] Failed to copy {file.name} to {class_dir}/{file.name}: {e}"
+                        f"[ !! ] Skipping {file_path.name}: Invalid or NaN after binning"
                     )
+                    file_path.unlink(missing_ok=True)
+                    continue
 
-        print("\n[ XX ] Data split and copy complete!")
+                if data.shape[1] != 12 or data.shape[0] != p // constants.WINDOW_SIZE:
+                    print(
+                        f"[ !! ] Skipping and removing {file_path.name} due to invalid shape."
+                    )
+                    file_path.unlink(missing_ok=True)
+                    continue
 
-        # Fit scaler on training data
-        scaler = sklearn.preprocessing.MinMaxScaler()
-        print(f"\n[ >> ] Fitting scaler on training data...")
+                if np.max(data) - np.min(data) < 0.2 or np.all(data == data[0]):
+                    print(
+                        f"[ !! ] Skipping and removing {file_path.name} due to flat signal."
+                    )
+                    file_path.unlink(missing_ok=True)
+                    continue
 
-        for file in (output_dir / "train").rglob("*.h5"):
-            with h5py.File(file, "r") as f:
-                X = f["X"][:]
-                if not np.isnan(X).any():
-                    reshaped = X.reshape(-1, X.shape[-1])
-                    scaler.partial_fit(reshaped)
+                root_dir = file_path.parent.parent.name
+                if root_dir == "train":
+                    data = scaler.fit_transform(data)
+                else:
+                    data = scaler.transform(data)
 
-        print("[ OK ] Scaler fitted.")
+                if np.isnan(data).any():
+                    print(f"[ !! ] Skipping {file_path.name}: NaNs after scaling")
+                    file_path.unlink(missing_ok=True)
+                    continue
 
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            for split in ["train", "val", "test"]:
-                print(f"\n[ -- ] Preprocessing files in '{split}'...")
-                split_dir = output_dir / split
-                split_files = list(split_dir.glob("**/*.h5"))
+                pd.DataFrame(data.astype(np.float32)).to_csv(
+                    file_path, header=False, index=False
+                )
+                # print(f"\n[ OK ] Saved to {file_path}")
+            print(f"\n[ OK ] Preprocessing is done. {file_path}")
 
-                future_to_file = {
-                    executor.submit(
-                        self.preprocess_files, file, scaler, output_dir
-                    ): file
-                    for file in split_files
-                }
-
-                for future in concurrent.futures.as_completed(future_to_file):
-                    file = future_to_file[future]
-                    try:
-                        future.result()
-                    except Exception as exc:
-                        print(
-                            f"[ !! ] An error occurred while processing {file.name}: {exc}"
-                        )
+        except Exception as e:
+            print(f"An error occured while preprocessing dataset:{e}")
 
     def get_dir_size(self, path):
         total = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) / (
@@ -287,9 +276,10 @@ if __name__ == "__main__":
     pp._extract(constants.ZIP_PATH, constants.PROJECT_DIR)
     pp._extract(constants.ZIP_CONTENT, constants.ZIP_CONTENT_OUTPUT)
     pp.read_xlsx(constants.XLSX_PATH)
-    pp.read_csv(constants.CSV_PATH)
-    pp.preprocess_data(constants.DATA_TEMP, constants.DATASET)
-    rm_dir_list = [constants.DATA_TEMP, constants.CSV_PATH, constants.ZIP_CONTENT]
+    pp.split_dataset(constants.DATASET)
+    pp.proc_dataset(constants.DATASET)
+
+    rm_dir_list = [constants.CSV_PATH, constants.ZIP_CONTENT]
     pp.rm_dirs(rm_dir_list)
     pp.get_dir_size(constants.ZIP_CONTENT_OUTPUT)
     elapsed_time = time.time() - start_time

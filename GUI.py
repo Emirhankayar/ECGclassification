@@ -23,6 +23,7 @@ import pyqtgraph as pg
 import tensorflow as tf
 from pathlib import Path
 from itertools import chain
+import Modules.constants as constants
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -36,11 +37,9 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-import Modules.constants as constants
 
-tf.config.set_visible_devices([], "GPU")
+
+tf.config.set_visible_devices([], "GPU")  # disables gpu
 
 
 class App(QMainWindow):
@@ -49,7 +48,6 @@ class App(QMainWindow):
 
         self.setWindowTitle("ECG-GUI")
         self.resize(900, 600)
-
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QHBoxLayout()
@@ -104,6 +102,7 @@ class App(QMainWindow):
         self.true_label_value = None
         self.model = None
         self.selected_patient = None
+
         self.load_selected_model()
 
     def load_model_files(self, folder_path: Path):
@@ -117,6 +116,7 @@ class App(QMainWindow):
             self.model_paths[filename] = model_file
 
     def load_selected_model(self):
+        self.prediction_label.setText("Prediction: --, --")
         selected_file = self.model_options.currentText()
         full_path = self.model_paths.get(selected_file)
 
@@ -211,8 +211,11 @@ class App(QMainWindow):
 
         try:
             patient_data = np.expand_dims(self.X_test, axis=0)
+            self.patient_data = patient_data
             prediction = self.model.predict(patient_data)
             predicted_class = np.argmax(prediction)
+            self.predicted_class_value = predicted_class
+
             f = self.label_map.get(predicted_class, "Unknown")
 
             self.prediction_label.setText(
