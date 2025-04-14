@@ -14,9 +14,9 @@ PROJECT_DIR = Path("./")
 ZIP_PATH = PROJECT_DIR / "Data.zip"
 XLSX_PATH = PROJECT_DIR / "Data/Diagnostics.xlsx"
 ZIP_CONTENT = PROJECT_DIR / "Data/ECGDataDenoised.zip"
-CSV_PATH = PROJECT_DIR / "Data/ECGDataDenoised/"
+CSV_PATH = PROJECT_DIR / "Data/ECGDataDenoised"
 ZIP_CONTENT_OUTPUT = PROJECT_DIR / "Data/"
-DATASET = PROJECT_DIR / "Data" / "Dataset"
+DATASET = PROJECT_DIR / "Data/Dataset"
 
 """
  MODEL TO LOAD FOR GUI
@@ -26,4 +26,17 @@ MODELS_DIR = PROJECT_DIR / "src/Models"
 """
  DO NOT MODIFY !
 """
-DATA_TEMP = PROJECT_DIR / "Data" / "Data_tmp"
+DATA_TEMP = PROJECT_DIR / "Data" / "tmp"
+RHYTHM_MAPPING = {
+    "AFIB": "AFIB",
+    "AF": "AFIB",
+    "SVT": "GSVT",
+    "AT": "GSVT",
+    "SAAWR": "GSVT",
+    "ST": "GSVT",
+    "AVNRT": "GSVT",
+    "AVRT": "GSVT",
+    "SB": "SB",
+    "SR": "SR",
+    "SA": "SR",
+}

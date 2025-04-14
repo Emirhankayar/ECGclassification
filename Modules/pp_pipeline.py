@@ -1,267 +1,296 @@
-import csv
+import time
 import h5py
 import shutil
 import zipfile
 import sklearn
-import openpyxl
 import constants
-import collections
+import concurrent
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
 
 
-def unzip_file(zip_filepath, output_dir):
-    with zipfile.ZipFile(zip_filepath, "r") as zip_ref:
-        files = zip_ref.namelist()
+class DatasetProcessor:
+    def __init__(self):
+        self.label_encoder = sklearn.preprocessing.LabelEncoder()
+        self.rhythm_mapping = constants.RHYTHM_MAPPING
+        self.patient_dict = {}
+        self._initialize()
 
-        for file in tqdm(files, desc="[    ] Unzipping content... ", unit="file"):
-            zip_ref.extract(file, output_dir)
-    print(f"\n[ XX ] Extracted all files to {output_dir}")
-
-
-def read_xlsx(file_path):
-    patient_dict = {}
-    wb = openpyxl.load_workbook(file_path, read_only=True)
-    ws = wb.active
-
-    header = {col: idx for idx, col in enumerate(next(ws.iter_rows(values_only=True)))}
-
-    for row in tqdm(
-        ws.iter_rows(values_only=True), desc="[    ] Reading Excel data... ", unit="row"
-    ):
-        if row[header["FileName"]] and row[header["Rhythm"]]:
-            patient_id = row[header["FileName"]]
-            rhythm = row[header["Rhythm"]]
-
-            if rhythm in rhythm_mapping:
-                mapped_rhythm = rhythm_mapping[rhythm]
-                target = label_encoder.transform([mapped_rhythm])[0]
-                patient_dict[patient_id] = target
-
-    print(f"\n[ XX ] Total patient entries loaded: {len(patient_dict)}")
-
-    wb.close()
-    return patient_dict
-
-
-def save_patient_hdf5(patient_id, sequences, target_class):
-    file_path = constants.DATA_TEMP / f"y_{target_class}" / f"{patient_id}.h5"
-
-    Path(file_path.parent).mkdir(parents=True, exist_ok=True)
-
-    with h5py.File(file_path, "w") as f:
-        f.create_dataset("sequences", data=sequences)
-
-
-def read_csv(directory, patient_dict):
-    for file in tqdm(
-        Path(directory).glob("*.csv"),
-        desc="[    ] Processing CSV files...",
-        unit="file",
-    ):
-        filename = file.stem
-
-        if filename in patient_dict:
-            target_class = patient_dict[filename]
-            sequences = []
-
-            with open(file, "r", newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-
-                for row in reader:
-                    try:
-                        sequence = list(map(float, row))
-                        if len(sequence) == 12:
-                            sequences.append(sequence)
-                    except ValueError:
-                        continue
-
-            if len(sequences) == 5000:
-                sequences = np.array(sequences, dtype=np.float32)
-                if not np.isnan(sequences).any():
-                    save_patient_hdf5(filename, sequences, target_class)
-    print(f"\n[ XX ] Processed all CSV files.")
-
-
-def check_dataset(directory=constants.DATA_TEMP):
-    dataset_dir = Path(directory)
-    print(f"\n[ ?? ] Checking dataset for corruption...")
-    if not dataset_dir.exists():
-        print("\n[ !! ] Dataset directory not found!")
-        return
-    print(f"\n[ OK ] Dataset directory exists.")
-
-    seen_files = collections.defaultdict(list)
-
-    for class_dir in sorted(dataset_dir.iterdir()):
-        if class_dir.is_dir():
-            class_label = class_dir.stem
-            # print(f"\n[    ] Checking class: {class_label}")
-
-            patient_files = list(class_dir.glob("*.h5"))
-            if not patient_files:
-                print(f"\n[ !! ] No patient files found in {class_label}")
-                continue
-            print(f"\n[ OK ] Patient files exists.")
-
-            first_file = patient_files[0]
-            with h5py.File(first_file, "r") as f:
-                if "sequences" in f:
-                    sequences = f["sequences"][:]
-                    if sequences.shape != (5000, 12):
-                        print("\n[ !! ] Data shape is incorrect! Expected (5000, 12)")
-                else:
-                    print(f"\n[ !! ] Missing 'sequences' dataset in {first_file.stem}")
-                print(f"\n[ OK ] Correct data shape, no missing sequences.")
-
-    duplicates = {k: v for k, v in seen_files.items() if len(v) > 1}
-    if duplicates:
-        print("\n[ !! ] Duplicate Files Found!")
-        for filename, classes in duplicates.items():
-            print(f" - {filename} appears in: {', '.join(classes)}")
-    else:
-        print("\n[ OK ] No duplicate filenames found across directories.")
-
-
-def bin_array(data, window_size=constants.WINDOW_SIZE):
-    sequence_length, num_channels = data.shape
-    new_sequence_length = sequence_length // window_size
-    reshaped = data[: new_sequence_length * window_size].reshape(
-        new_sequence_length, window_size, num_channels
-    )
-    binned_data = np.mean(reshaped, axis=1)
-    return binned_data
-
-
-def pp_dataset(directory=constants.DATA_TEMP, output_directory=constants.DATASET):
-    print(f"\n[    ] Splitting train, val, test...")
-    dataset_dir = Path(directory)
-    output_dir = Path(output_directory)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for split in ["train", "val", "test"]:
-        (output_dir / split).mkdir(exist_ok=True)
-
-    file_labels = []
-
-    for class_dir in sorted(dataset_dir.iterdir()):
-        if class_dir.is_dir():
-            class_label = class_dir.stem
-            (output_dir / "train" / class_label).mkdir(parents=True, exist_ok=True)
-            (output_dir / "val" / class_label).mkdir(parents=True, exist_ok=True)
-            (output_dir / "test" / class_label).mkdir(parents=True, exist_ok=True)
-
-            for patient_file in class_dir.glob("*.h5"):
-                file_labels.append((patient_file, class_label))
-
-    files, labels = zip(*file_labels)
-
-    X_train, X_temp, y_train, y_temp = sklearn.model_selection.train_test_split(
-        files, labels, test_size=0.2, random_state=42, stratify=labels
-    )
-    X_val, X_test, y_val, y_test = sklearn.model_selection.train_test_split(
-        X_temp, y_temp, test_size=0.25, random_state=42, stratify=y_temp
-    )
-    print(f"\n[ XX ] Split done.")
-
-    def process_and_save(files, labels, split, scaler=None):
+    def _initialize(self):
+        print("\n[ ii ] Initializing data preprocessing module...")
         print(
-            f"\n[    ] Binning data... Expected Shape : {5000//constants.WINDOW_SIZE, 12}"
+            f"\n\n[ ?? ] (#_samples,{5000//constants.WINDOW_SIZE},12) is the final data shape."
         )
-        print(f"\n[    ] Scaling data...")
-        for file, label in tqdm(
-            zip(files, labels), desc=f"[    ] Preprocessing {split} files", unit="file"
-        ):
+        encoded_classes = list(self.rhythm_mapping.values())
+        self.label_encoder.fit(encoded_classes)
 
-            with h5py.File(file, "r") as f:
-                if "sequences" in f:
-                    sequences = f["sequences"][:]
-                    sequences = bin_array(sequences)
+    def _extract(self, input_dir, output_dir):
 
-                    if sequences.shape != (5000 // constants.WINDOW_SIZE, 12):
-                        print(
-                            f"\n Skipping {file.stem}, incorrect shape: {sequences.shape}"
-                        )
-                        continue
+        try:
+            with zipfile.ZipFile(input_dir, "r") as zip_ref:
+                files = zip_ref.namelist()
+                tqdm.write(f"\n[ >> ] Preparing to unzip {len(files)} files...")
 
-                    if split == "train":
-                        scaler = sklearn.preprocessing.MinMaxScaler()
-                        sequences = scaler.fit_transform(sequences)
+                pbar = tqdm(
+                    total=len(files), desc="[    ] Unzipping content... ", unit="file"
+                )
+
+                def extract_file(file):
+                    zip_ref.extract(file, output_dir)
+                    pbar.update(1)
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    executor.map(extract_file, files)
+
+            tqdm.write(f"\n[ XX ] Extracted all files to {output_dir}")
+            time.sleep(5)
+
+        except FileNotFoundError:
+            tqdm.write(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+        except zipfile.BadZipFile:
+            tqdm.write(
+                f"\n[ !! ] Error: The file '{input_dir}' is not a valid zip file."
+            )
+        except Exception as e:
+            tqdm.write(f"\n[ !! ] An error occurred while extracting the files: {e}")
+
+    def read_xlsx(self, input_dir):
+        try:
+            print(f"\n[ ii ] Reading file : {input_dir}")
+            df = pd.read_excel(
+                input_dir, engine="openpyxl", usecols=["FileName", "Rhythm"]
+            )
+
+            df["Mapped_Rhythm"] = df["Rhythm"].map(self.rhythm_mapping)
+            df = df.dropna(subset=["Mapped_Rhythm"])
+            df["Target"] = self.label_encoder.transform(df["Mapped_Rhythm"])
+            df["Target"] = df["Target"].astype("int32")
+
+            self.patient_dict = df.set_index("FileName")["Target"].to_dict()
+
+            print(f"\n[ XX ] Total patient entries loaded: {len(self.patient_dict)}")
+        except FileNotFoundError:
+            print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+        except Exception as e:
+            print(f"\n[ !! ] An error occurred: {e}")
+
+    def read_csv(self, input_dir):
+        try:
+            print(f"\n[ ii ] Reading all files at {input_dir}")
+            files = list(Path(input_dir).glob("*.csv"))
+
+            def process_file(file):
+                filename = file.stem
+                if filename in self.patient_dict:
+                    target_class = self.patient_dict[filename]
+                    df = pd.read_csv(file, header=None)
+                    df = df.to_numpy(dtype=np.float32)
+                    sequences = self.bin_array(df, constants.WINDOW_SIZE)
+                    if (
+                        sequences.shape[1] == 12
+                        and sequences.shape[0] == 5000 // constants.WINDOW_SIZE
+                    ):
+                        if not np.isnan(sequences).any():
+                            file_path = (
+                                constants.DATA_TEMP
+                                / str(target_class)
+                                / f"{filename}.h5"
+                            )
+                            self.save_hdf5(file_path, sequences)
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                executor.map(process_file, files)
+
+            print(f"\n[ XX ] All data is processed and saved.")
+        except FileNotFoundError:
+            print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
+        except Exception as e:
+            print(f"\n[ !! ] An error occurred: {e}")
+
+    def bin_array(self, data, window_size):
+        sequence_length, num_channels = data.shape
+        new_sequence_length = sequence_length // window_size
+        reshaped = data[: new_sequence_length * window_size].reshape(
+            new_sequence_length, window_size, num_channels
+        )
+        return np.mean(reshaped, axis=1)
+
+    def save_hdf5(self, file_path, sequences):
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with h5py.File(file_path, "w") as f:
+            f.create_dataset("X", data=sequences)
+
+        print(f"[ OK ] Saved {file_path.name}")
+
+    def preprocess_files(self, file, scaler, output_dir):
+        try:
+            with h5py.File(file, "r+") as f:  # 'r+' allows overwriting
+                if "X" in f:
+                    X = f["X"][:]
+                    # y = f["y"][()]
+                    # y = y.astype("int32")
+
+                    if (
+                        X.shape[1] == 12
+                        and X.shape[0] == 5000 // constants.WINDOW_SIZE
+                        and X.dtype == "float32"
+                        and not np.isnan(X).any()
+                    ):
+
+                        reshaped = X.reshape(-1, X.shape[-1])
+                        scaled = scaler.transform(reshaped)
+                        X = scaled.reshape(X.shape)
+                        # Check for flatlines
+                        X_list = []
+                        threshold = 0.2
+                        for s in X:
+                            if (
+                                not np.all(s == s[0])
+                                or np.max(s) - np.min(s) < threshold
+                            ):
+                                X_list.append(s)
+                        if len(X_list) == 0:
+                            print(
+                                f"[ !! ] All sequences flat in {file.name}, skipping..."
+                            )
+                            return
+
+                        X = np.stack(X_list)
+                        # Overwrite the dataset
+                        del f["X"]
+                        #                        del f["y"]
+
+                        f.create_dataset("X", data=X.astype("float32"))
+                        #                        f.create_dataset("y", data=y.astype("int32"))
+
+                        print(f"[ OK ] Preprocessed {file.name}")
                     else:
-                        sequences = scaler.transform(sequences)
-
-                    save_path = output_dir / split / label / file.name
-                    with h5py.File(save_path, "w") as f_out:
-                        f_out.create_dataset("sequences", data=sequences)
+                        print(f"\n[ !! ] Shape or dtype mismatch in {file.name}")
                 else:
-                    print(f"\n[ !! ] Missing 'sequences' dataset in {file.stem}")
-        print(f"\n[ XX ] Binning done.")
-        print(f"\n[ XX ] Scaling done.")
-        return scaler
+                    print(f"\n[ !! ] Expected datasets not found in {file.name}")
+        except Exception as e:
+            print(f"\n[ !! ] Failed to read/write {file.name}: {e}")
 
-    scaler = None
-    scaler = process_and_save(X_train, y_train, "train", scaler)
-    scaler = process_and_save(X_val, y_val, "val", scaler)
-    scaler = process_and_save(X_test, y_test, "test", scaler)
+    def preprocess_data(self, input_dir, output_dir):
+        files = list(input_dir.rglob("*.h5"))
+        file_class_pairs = [(file, file.parent.name) for file in files]
 
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+        for split in ["train", "val", "test"]:
+            (output_dir / split).mkdir(exist_ok=True)
 
-def rm_dirs(directories: list[Path]):
-    for directory in directories:
-        if directory.exists() and directory.is_dir():
-            print(f"\n[ ii ] Deleting directory: {directory}")
-            shutil.rmtree(directory)
-        else:
-            print(f"\n[ !! ] Directory {directory} not found.")
+        file_paths, class_labels = zip(*file_class_pairs)
+        train_files, temp_files, train_labels, temp_labels = (
+            sklearn.model_selection.train_test_split(
+                file_paths,
+                class_labels,
+                test_size=0.30,
+                stratify=class_labels,
+                random_state=42,
+            )
+        )
+        val_files, test_files, val_labels, test_labels = (
+            sklearn.model_selection.train_test_split(
+                temp_files,
+                temp_labels,
+                test_size=0.50,
+                stratify=temp_labels,
+                random_state=42,
+            )
+        )
+        split_map = {
+            "train": list(zip(train_files, train_labels)),
+            "val": list(zip(val_files, val_labels)),
+            "test": list(zip(test_files, test_labels)),
+        }
 
+        for split, items in split_map.items():
+            print(f"\n[ >> ] Copying {len(items)} files to '{split}' directory...")
+            for file, label in items:
+                class_dir = output_dir / split / label
+                class_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(file, class_dir / file.name)
 
-def get_dir_size(path):
-    return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())
+                try:
+                    shutil.copy(file, class_dir / file.name)
+                except Exception as e:
+                    print(
+                        f"\n[ !! ] Failed to copy {file.name} to {class_dir}/{file.name}: {e}"
+                    )
+
+        print("\n[ XX ] Data split and copy complete!")
+
+        # Fit scaler on training data
+        scaler = sklearn.preprocessing.MinMaxScaler()
+        print(f"\n[ >> ] Fitting scaler on training data...")
+
+        for file in (output_dir / "train").rglob("*.h5"):
+            with h5py.File(file, "r") as f:
+                X = f["X"][:]
+                if not np.isnan(X).any():
+                    reshaped = X.reshape(-1, X.shape[-1])
+                    scaler.partial_fit(reshaped)
+
+        print("[ OK ] Scaler fitted.")
+
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            for split in ["train", "val", "test"]:
+                print(f"\n[ -- ] Preprocessing files in '{split}'...")
+                split_dir = output_dir / split
+                split_files = list(split_dir.glob("**/*.h5"))
+
+                future_to_file = {
+                    executor.submit(
+                        self.preprocess_files, file, scaler, output_dir
+                    ): file
+                    for file in split_files
+                }
+
+                for future in concurrent.futures.as_completed(future_to_file):
+                    file = future_to_file[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        print(
+                            f"[ !! ] An error occurred while processing {file.name}: {exc}"
+                        )
+
+    def get_dir_size(self, path):
+        total = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) / (
+            1024 * 3
+        )
+        print(total)
+
+    def rm_dirs(self, directories: list[Path]):
+        for directory in directories:
+            if directory.exists():
+                if directory.is_dir():
+                    print(f"\n[ ii ] Deleting directory: {directory}")
+                    shutil.rmtree(directory)
+                elif directory.is_file():
+                    print(f"\n[ ii ] Deleting file: {directory}")
+                    directory.unlink()
+                else:
+                    print(
+                        f"\n[ !! ] Path {directory} is neither a directory nor a file."
+                    )
+            else:
+                print(f"\n[ !! ] Path {directory} not found.")
 
 
 if __name__ == "__main__":
-    print("\n[ ii ] Initializing data preprocessing module...")
-
-    with zipfile.ZipFile(constants.ZIP_PATH, "r") as zip_ref:
-        print("\n[    ] Extracting Data...")
-        zip_ref.extractall()
-        print("\n[ XX ] Extracted all raw data.")
-
-    rhythm_mapping = {
-        "AFIB": "AFIB",
-        "AF": "AFIB",
-        "SVT": "GSVT",
-        "AT": "GSVT",
-        "SAAWR": "GSVT",
-        "ST": "GSVT",
-        "AVNRT": "GSVT",
-        "AVRT": "GSVT",
-        "SB": "SB",
-        "SR": "SR",
-        "SA": "SR",
-    }
-
-    label_encoder = sklearn.preprocessing.LabelEncoder()
-    encoded_classes = list(rhythm_mapping.values())
-    label_encoder.fit(encoded_classes)
-
-    unzip_file(constants.ZIP_CONTENT, constants.ZIP_CONTENT_OUTPUT)
-    patient_dict = read_xlsx(constants.XLSX_PATH)
-    read_csv(constants.CSV_PATH, patient_dict)
-    check_dataset(constants.DATA_TEMP)
-    pp_dataset(constants.DATA_TEMP, constants.DATASET)
-    dirs_to_delete = [
-        constants.DATA_TEMP,
-        constants.CSV_PATH,
-        constants.ZIP_CONTENT,
-    ]
-
-    rm_dirs(dirs_to_delete)
-    size = get_dir_size("Data")
-
-    print(
-        f"\n[ OK ] Preprocessing succesfully finished! \
-        \n\n[ ?? ] (#_samples,{5000//constants.WINDOW_SIZE},12) is the final data shape.\
-        \n\n[ ?? ] If there is a mistake modify the 'WINDOW_SIZE' variable in constants.py."
-    )
-    print(f"\n[ ?? ] Size of the final directory: {size / (1024 ** 2):.2f} MB")
+    start_time = time.time()
+    pp = DatasetProcessor()
+    pp._extract(constants.ZIP_PATH, constants.PROJECT_DIR)
+    pp._extract(constants.ZIP_CONTENT, constants.ZIP_CONTENT_OUTPUT)
+    pp.read_xlsx(constants.XLSX_PATH)
+    pp.read_csv(constants.CSV_PATH)
+    pp.preprocess_data(constants.DATA_TEMP, constants.DATASET)
+    rm_dir_list = [constants.DATA_TEMP, constants.CSV_PATH, constants.ZIP_CONTENT]
+    pp.rm_dirs(rm_dir_list)
+    pp.get_dir_size(constants.ZIP_CONTENT_OUTPUT)
+    elapsed_time = time.time() - start_time
+    print(f"\n Elapsed_time {elapsed_time}")

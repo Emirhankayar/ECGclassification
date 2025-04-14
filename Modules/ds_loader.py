@@ -1,34 +1,41 @@
-import h5py
+import pathlib
 import numpy as np
-
-LABELS = {"y_0": 0, "y_1": 1, "y_2": 2, "y_3": 3}
-
-
-def load_patient_data(file_path):
-    with h5py.File(file_path, "r") as f:
-        data = f["sequences"][:]
-    return data
+import pandas as pd
 
 
-def load_all_data(directory, sample_percentage=1.0):
-    all_data = []
-    all_labels = []
+def load_data(data_dir, expected_shape=(500, 12)):
+    X = []
+    y = []
 
-    class_dirs = [directory / cls for cls in LABELS]
+    data_dir = pathlib.Path(data_dir)
 
-    for class_dir in class_dirs:
-        label = LABELS[class_dir.name]
-        patient_files = [file for file in class_dir.glob("*.h5")]
+    for label_dir in data_dir.iterdir():
+        if label_dir.is_dir():
+            label = int(label_dir.name)
 
-        num_samples = int(len(patient_files) * sample_percentage)
-        patient_files = np.random.choice(patient_files, num_samples, replace=False)
+            for csv_file in label_dir.glob("*.csv"):
+                try:
+                    data = pd.read_csv(csv_file, header=None).astype(np.float32).values
 
-        for file_path in patient_files:
-            patient_data = load_patient_data(file_path)
-            all_data.append(patient_data)
-            all_labels.append(label)
+                    if data.shape != expected_shape:
+                        print(
+                            f"[ !! ]Skipping {csv_file.name}: Unexpected shape {data.shape}"
+                        )
+                        continue
 
-    X = np.array(all_data)
-    y = np.array(all_labels, dtype=np.int32)
+                    if np.isnan(data).any():
+                        print(f"[ !! ]Skipping {csv_file.name}: Contains NaNs")
+                        continue
+
+                    X.append(data)
+                    y.append(label)
+
+                except Exception as e:
+                    print(f"[ XX ] Failed to load {csv_file}: {e}")
+
+    X = np.stack(X, axis=0)
+    y = np.array(y, dtype=np.int32)
+
+    print(f"[ OK ] Loaded {X.shape[0]} samples with shape {X.shape[1:]}")
 
     return X, y
