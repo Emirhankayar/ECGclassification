@@ -80,14 +80,5 @@ def load_tf_data():
     X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
 
     print(f"Class distribution after SMOTE: {Counter(y_train)}")
-    BATCH_SIZE = 32
-    train = tf.data.Dataset.from_tensor_slices((X_train, y_train))
-    val = tf.data.Dataset.from_tensor_slices((X_val, y_val))
-    test = tf.data.Dataset.from_tensor_slices((X_test, y_test))
-    train_loader = train.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-    val_loader = val.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-    test_loader = test.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
-    train_loader = train_loader.cache()
-    val_loader = val_loader.cache()
-    test_loader = test_loader.cache()
-    return train_loader, val_loader, test_loader
+
+    return X_train, y_train, X_val, y_val, X_test, y_test

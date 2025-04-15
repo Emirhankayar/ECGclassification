@@ -121,7 +121,7 @@ class DatasetProcessor:
                     continue
 
                 train_files, temp_files = sklearn.model_selection.train_test_split(
-                    files, test_size=0.3, random_state=42, shuffle=True
+                    files, test_size=0.2, random_state=42, shuffle=True
                 )
                 val_files, test_files = sklearn.model_selection.train_test_split(
                     temp_files, test_size=0.5, random_state=42, shuffle=True
@@ -154,16 +154,18 @@ class DatasetProcessor:
 
     def bin_array(self, data, final_size):
         sequence_length, num_channels = data.shape
-        if final_size > sequence_length:
-            return None
+
+        if sequence_length < final_size:
+            pad_length = final_size - sequence_length
+            padding = np.zeros((pad_length, num_channels), dtype=np.float32)
+            data = np.vstack([data, padding])
+            sequence_length = data.shape[0]
+
         if final_size == sequence_length:
             return data
 
-        window_size = (
-            sequence_length // final_size
-        )  # added 5000//500 == window size = 10
-
-        new_sequence_length = sequence_length // window_size  # 5000 // 10 == final_size
+        window_size = sequence_length // final_size
+        new_sequence_length = sequence_length // window_size
 
         reshaped = data[: new_sequence_length * window_size].reshape(
             new_sequence_length, window_size, num_channels
@@ -171,21 +173,36 @@ class DatasetProcessor:
         return np.mean(reshaped, axis=1)
 
     def proc_dataset(self, input_dir):
-        """
-        - read files
-        - make sure float 32 sequences
-        - bin sequences
-        - shape check if not shape then eliminate
-        - make sure no flats max - min th, directly = 0 check
-        - apply minmax scaling
-        - while continue also rm the skipped files
-        - save all the preprocessed files back to where they belong.
-
-        """
         print("\n[ ii ] Preprocessing dataset...")
+
         try:
-            files = list(Path(input_dir).rglob("*.csv"))
             scaler = sklearn.preprocessing.MinMaxScaler()
+            train_files = list(Path(input_dir).rglob("train/**/*.csv"))
+
+            train_data = []
+            for file_path in train_files:
+                data = (
+                    pd.read_csv(file_path, header=None, engine="c", low_memory=False)
+                    .astype(np.float32)
+                    .values
+                )
+
+                if data.shape != (constants.FINAL_SIZE, 12):
+                    data = self.bin_array(data, constants.FINAL_SIZE)
+                    if data is None:
+                        continue
+
+                train_data.append(data)
+
+            if not train_data:
+                print("[ !! ] No valid training data found to fit scaler.")
+                return
+
+            all_train_data = np.vstack(train_data)
+            scaler.fit(all_train_data)
+            print("[ OK ] Scaler fitted on training data.")
+
+            files = list(Path(input_dir).rglob("*.csv"))
             for file_path in files:
                 data = (
                     pd.read_csv(file_path, header=None, engine="c", low_memory=False)
@@ -193,18 +210,14 @@ class DatasetProcessor:
                     .values
                 )
 
-                if constants.FINAL_SIZE != data.shape[0]:
+                if data.shape != (constants.FINAL_SIZE, 12):
                     data = self.bin_array(data, constants.FINAL_SIZE)
                     if data is None:
                         print(
-                            f"[ !! ] Skipping {file_path.name}: Sequence too short for binning. {data.shape}"
+                            f"[ !! ] Skipping {file_path.name}: Sequence too short for binning."
                         )
                         file_path.unlink(missing_ok=True)
                         continue
-
-                root_dir = file_path.parent.parent.name
-                if root_dir == "train":
-                    data = scaler.fit_transform(data)
 
                 data = scaler.transform(data)
 
@@ -226,7 +239,7 @@ class DatasetProcessor:
             print(f"\n[ OK ] Preprocessing is done.")
 
         except Exception as e:
-            print(f"An error occured while preprocessing dataset:{e}")
+            print(f"An error occurred while preprocessing dataset: {e}")
 
     def dummy_excel(self, input_dir):
         try:

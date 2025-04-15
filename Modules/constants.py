@@ -3,7 +3,7 @@ FINAL_SIZE =5000 // DYNAMIC WINDOW SIZE
 (FINAL_SIZE, 12)
 """
 
-FINAL_SIZE = 500
+FINAL_SIZE = 1000
 
 from pathlib import Path
 
