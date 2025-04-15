@@ -3,8 +3,6 @@ import time
 import shutil
 import zipfile
 import sklearn
-import sklearn.model_selection
-import sklearn.preprocessing
 import constants
 import concurrent
 import numpy as np
@@ -195,7 +193,6 @@ class DatasetProcessor:
         try:
             files = list(Path(input_dir).rglob("*.csv"))
             scaler = sklearn.preprocessing.MinMaxScaler()
-
             for file_path in files:
                 data = pd.read_csv(file_path, header=None).astype(np.float32).values
 
@@ -204,10 +201,9 @@ class DatasetProcessor:
                     file_path.unlink(missing_ok=True)
                     continue
 
-                if constants.WINDOW_SIZE == 1:
-                    data = data
-                else:
-                    data = self.bin_array(data, constants.WINDOW_SIZE)  # BINNING
+                # data = self.bin_array(data, constants.WINDOW_SIZE)  # BINNING
+                if constants.WINDOW_SIZE > 1:
+                    data = self.bin_array(data, constants.WINDOW_SIZE)
 
                 if data.size == 0 or np.isnan(data).any():
                     print(
@@ -221,7 +217,7 @@ class DatasetProcessor:
                     or data.shape[0] != 5000 // constants.WINDOW_SIZE
                 ):
                     print(
-                        f"[ !! ] Skipping and removing {file_path.name} due to invalid shape."
+                        f"[ !! ] Skipping and removing {file_path.name} due to invalid shape. {data.shape}"
                     )
                     file_path.unlink(missing_ok=True)
                     continue
@@ -263,11 +259,9 @@ class DatasetProcessor:
                 f"{input_dir.stem}Testing{input_dir.suffix}"
             )
 
-            # Copy the original file to backup
             shutil.copy2(input_dir, backup_path)
             print(f"\n[ OK ] Backup created at: {backup_path}")
 
-            # Load, clear, and save
             df = pd.read_excel(input_dir)
 
             if "Rhythm" in df.columns:

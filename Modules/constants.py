@@ -5,7 +5,7 @@ WINDOW_SIZE = TOTAL 5000,
    5000 // 20 = 250 is the number needed if 250 rows wanted
 """
 
-WINDOW_SIZE = 5
+WINDOW_SIZE = 10
 
 
 from pathlib import Path
