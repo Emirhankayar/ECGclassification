@@ -40,6 +40,10 @@ def load_data(data_dir):
                         )
                         continue
 
+                    if np.isnan(data).any():
+                        print(f"[ !! ]Skipping {csv_file.name}: Contains NaNs")
+                        continue
+
                     X.append(data)
                     y.append(label)
 
@@ -54,7 +58,7 @@ def load_data(data_dir):
     return X, y
 
 
-def load_tf_data_():
+def load_tf_data():
     tr = DATA_PATH / "train"
     vl = DATA_PATH / "val"
     tst = DATA_PATH / "test"
@@ -87,71 +91,3 @@ def load_tf_data_():
     val_loader = val_loader.cache()
     test_loader = test_loader.cache()
     return train_loader, val_loader, test_loader
-
-
-def load_tf_data():
-    tr = DATA_PATH / "train"
-    vl = DATA_PATH / "val"
-    tst = DATA_PATH / "test"
-    X_train, y_train = load_data(tr)
-    X_test, y_test = load_data(tst)
-    X_val, y_val = load_data(vl)
-    print("Unique classes in y:", np.unique(y_train))
-    print("Datatype:", (X_train.dtype), (y_train.dtype))
-    print(f"Min and Max of X_train: {np.min(X_train)}, {np.max(X_train)}")
-    print(f"Min and Max of X_val: {np.min(X_val)}, {np.max(X_val)}")
-    print(f"Min and Max of X_test: {np.min(X_test)}, {np.max(X_test)}")
-    print(f"NaNs in X: {np.isnan(X_train).sum()}")
-    print(f"Infs in X: {np.isinf(X_train).sum()}")
-    print(f"Class distribution before SMOTE: {Counter(y_train)}")
-    print(f"\n\n Applying oversampling via SMOTE")
-    X_train_flat = X_train.reshape((X_train.shape[0], -1))
-    smote = imblearn.over_sampling.SMOTE(random_state=42)
-    X_resampled, y_train = smote.fit_resample(X_train_flat, y_train)
-    X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
-    # Check if memory is an issue, you can adjust these values.
-    BATCH_SIZE = 32
-    SHUFFLE_BUFFER_SIZE = 1000  # Adjust based on your available memory
-
-    # Create tf.data.Dataset objects without caching
-    train = tf.data.Dataset.from_tensor_slices((X_train, y_train))
-    val = tf.data.Dataset.from_tensor_slices((X_val, y_val))
-    test = tf.data.Dataset.from_tensor_slices((X_test, y_test))
-
-    # Train dataset: shuffle, batch, map, and prefetch
-    train_loader = (
-        train.shuffle(
-            buffer_size=SHUFFLE_BUFFER_SIZE
-        )  # Smaller buffer if memory is limited
-        .batch(BATCH_SIZE)
-        .map(
-            lambda x, y: (tf.convert_to_tensor(x), tf.convert_to_tensor(y)),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-        .prefetch(tf.data.AUTOTUNE)  # Prefetch to avoid bottlenecks
-    )
-
-    # Validation and test datasets: batch and prefetch
-    val_loader = (
-        val.batch(BATCH_SIZE)
-        .map(
-            lambda x, y: (tf.convert_to_tensor(x), tf.convert_to_tensor(y)),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-        .prefetch(tf.data.AUTOTUNE)
-    )
-
-    test_loader = (
-        test.batch(BATCH_SIZE)
-        .map(
-            lambda x, y: (tf.convert_to_tensor(x), tf.convert_to_tensor(y)),
-            num_parallel_calls=tf.data.AUTOTUNE,
-        )
-        .prefetch(tf.data.AUTOTUNE)
-    )
-
-    return train_loader, val_loader, test_loader
-
-
-if __name__ == "__main__":
-    load_tf_data()
