@@ -40,10 +40,6 @@ def load_data(data_dir):
                         )
                         continue
 
-                    if np.isnan(data).any():
-                        print(f"[ !! ]Skipping {csv_file.name}: Contains NaNs")
-                        continue
-
                     X.append(data)
                     y.append(label)
 

@@ -193,7 +193,7 @@ class DatasetProcessor:
                     .values
                 )
 
-                if constants.FINAL_SIZE != data.shape[1]:
+                if constants.FINAL_SIZE != data.shape[0]:
                     data = self.bin_array(data, constants.FINAL_SIZE)
                     if data is None:
                         print(
