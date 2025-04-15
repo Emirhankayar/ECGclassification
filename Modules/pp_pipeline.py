@@ -220,7 +220,7 @@ class DatasetProcessor:
                     continue
 
                 pd.DataFrame(data.astype(np.float32)).to_csv(
-                    file_path, header=False, index=False, engine="c", low_memory=False
+                    file_path, header=False, index=False
                 )
 
             print(f"\n[ OK ] Preprocessing is done.")
