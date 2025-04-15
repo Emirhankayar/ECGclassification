@@ -1,12 +1,9 @@
 """
-WINDOW_SIZE = TOTAL 5000,
-   division by integer, to obtain desired result
-   in below case num_samples,250,12
-   5000 // 20 = 250 is the number needed if 250 rows wanted
+FINAL_SIZE =5000 // DYNAMIC WINDOW SIZE
+(FINAL_SIZE, 12)
 """
 
-WINDOW_SIZE = 10
-
+FINAL_SIZE = 500
 
 from pathlib import Path
 
@@ -39,4 +36,18 @@ RHYTHM_MAPPING = {
     "SB": "SB",
     "SR": "SR",
     "SA": "SR",
+}
+
+RHY_DICT = {
+    "AF": 0,
+    "AFIB": 0,
+    "SVT": 1,
+    "AT": 1,
+    "SAAWR": 1,
+    "ST": 1,
+    "AVNRT": 1,
+    "AVRT": 1,
+    "SB": 2,
+    "SA": 3,
+    "SR": 3,
 }

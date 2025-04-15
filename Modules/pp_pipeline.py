@@ -1,4 +1,10 @@
 import os
+
+n_threads = str(os.cpu_count())
+os.environ["OMP_NUM_THREADS"] = n_threads
+os.environ["MKL_NUM_THREADS"] = n_threads
+os.environ["OPENBLAS_NUM_THREADS"] = n_threads
+os.environ["NUMEXPR_NUM_THREADS"] = n_threads
 import time
 import shutil
 import zipfile
@@ -7,7 +13,6 @@ import constants
 import concurrent
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from pathlib import Path
 
 
@@ -18,34 +23,30 @@ class DatasetProcessor:
 
     def _initialize(self):
         print("\n[ ii ] Initializing data preprocessing module...")
-        print(
-            f"\n\n[ ?? ] (#_samples,{5000//constants.WINDOW_SIZE},12) is the final data shape."
-        )
+        print(f"\n\n[ ?? ] (#,{constants.FINAL_SIZE},12) is the final data shape.")
 
     def _extract(self, input_dir, output_dir):
+        with zipfile.ZipFile(input_dir, "r") as zf:
+            members = [m for m in zf.infolist() if not m.is_dir()]
 
-        try:
-            with zipfile.ZipFile(input_dir, "r") as zip_ref:
-                files = zip_ref.namelist()
-                print(f"\n[ >> ] Preparing to unzip {len(files)} files...")
+            print(f"[ >> ] Preparing to unzip {len(members)} files with threads...")
 
-                pbar = tqdm(
-                    total=len(files), desc="[    ] Unzipping content... ", unit="file"
-                )
+            def extract_member(member):
+                target_path = Path(output_dir) / member.filename
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src, open(target_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                return member.file_size
 
-                def extract_file(file):
-                    zip_ref.extract(file, output_dir)
-                    pbar.update(1)
+            total = 0
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=os.cpu_count()
+            ) as executor:
+                futures = [executor.submit(extract_member, m) for m in members]
+                for future in concurrent.futures.as_completed(futures):
+                    total += future.result()
 
-                with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as executor:
-                    executor.map(extract_file, files)
-
-        except FileNotFoundError:
-            print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
-        except zipfile.BadZipFile:
-            print(f"\n[ !! ] Error: The file '{input_dir}' is not a valid zip file.")
-        except Exception as e:
-            print(f"\n[ !! ] An error occurred while extracting the files: {e}")
+        return total
 
     def read_xlsx(self, input_dir):
         """
@@ -60,31 +61,17 @@ class DatasetProcessor:
                 return
 
             df = pd.read_excel(input_dir, usecols=["FileName", "Rhythm"])
-            df["Rhythm"] = df["Rhythm"].replace(
-                {
-                    "AF": 0,
-                    "AFIB": 0,
-                    "SVT": 1,
-                    "AT": 1,
-                    "SAAWR": 1,
-                    "ST": 1,
-                    "AVNRT": 1,
-                    "AVRT": 1,
-                    "SB": 2,
-                    "SA": 3,
-                    "SR": 3,
-                }
-            )
-
-            print(df["Rhythm"].unique())
+            df["Rhythm"] = df["Rhythm"].replace(constants.RHY_DICT)
 
             for i in range(4):
                 (constants.DATASET / str(i)).mkdir(parents=True, exist_ok=True)
 
             patient_files = list(constants.CSV_PATH.glob("*.csv"))
+
             patient_map = {f.stem: f for f in patient_files}
 
-            def move_file(row):
+            print(f"[ ii ] Moving files to corresponding directories.")
+            for _, row in df.iterrows():
                 file_name = row["FileName"]
                 rhythm = row["Rhythm"]
                 if file_name in patient_map:
@@ -92,12 +79,8 @@ class DatasetProcessor:
                     target_dir = constants.DATASET / str(rhythm)
                     destination = target_dir / file_path.name
                     file_path.rename(destination)
-                    print(f"Moved {file_path.name} to {target_dir}")
                 else:
                     print(f"File {file_name} not found.")
-
-            with concurrent.futures.ThreadPoolExecutor(os.cpu_count()) as executor:
-                executor.map(move_file, [row for _, row in df.iterrows()])
 
             moved_files = {
                 f.stem
@@ -112,8 +95,6 @@ class DatasetProcessor:
                 print(
                     f"\n[ !! ] {len(missing_after_move)} file(s) NOT found after move:"
                 )
-                for file in missing_after_move:
-                    print(f" - {file}.csv")
             else:
                 print(
                     "\n[ OK ] All expected files successfully moved to dataset subdirectories."
@@ -122,6 +103,7 @@ class DatasetProcessor:
             print(f"Some error occurred: {e}")
 
     def split_dataset(self, input_dir):
+        print("\n[ ii ] Splitting Dataset into train, validation, test...")
         try:
             class_dirs = [input_dir / str(i) for i in range(4)]
 
@@ -170,9 +152,19 @@ class DatasetProcessor:
         except Exception as e:
             print(f"\n[ !! ] Error in proc_dataset: {e}")
 
-    def bin_array(self, data, window_size):
+    def bin_array(self, data, final_size):
         sequence_length, num_channels = data.shape
-        new_sequence_length = sequence_length // window_size
+        if final_size > sequence_length:
+            return None
+        if final_size == sequence_length:
+            return data
+
+        window_size = (
+            sequence_length // final_size
+        )  # added 5000//500 == window size = 10
+
+        new_sequence_length = sequence_length // window_size  # 5000 // 10 == final_size
+
         reshaped = data[: new_sequence_length * window_size].reshape(
             new_sequence_length, window_size, num_channels
         )
@@ -182,7 +174,7 @@ class DatasetProcessor:
         """
         - read files
         - make sure float 32 sequences
-        - bin sequences // constants.WINDOW_SIZE
+        - bin sequences
         - shape check if not shape then eliminate
         - make sure no flats max - min th, directly = 0 check
         - apply minmax scaling
@@ -190,61 +182,48 @@ class DatasetProcessor:
         - save all the preprocessed files back to where they belong.
 
         """
+        print("\n[ ii ] Preprocessing dataset...")
         try:
             files = list(Path(input_dir).rglob("*.csv"))
             scaler = sklearn.preprocessing.MinMaxScaler()
             for file_path in files:
-                data = pd.read_csv(file_path, header=None).astype(np.float32).values
+                data = (
+                    pd.read_csv(file_path, header=None, engine="c", low_memory=False)
+                    .astype(np.float32)
+                    .values
+                )
 
-                if data.size == 0:
-                    print(f"[ !! ] Skipping {file_path.name}: Empty file")
-                    file_path.unlink(missing_ok=True)
-                    continue
-
-                # data = self.bin_array(data, constants.WINDOW_SIZE)  # BINNING
-                if constants.WINDOW_SIZE > 1:
-                    data = self.bin_array(data, constants.WINDOW_SIZE)
-
-                if data.size == 0 or np.isnan(data).any():
-                    print(
-                        f"[ !! ] Skipping {file_path.name}: Invalid or NaN after binning"
-                    )
-                    file_path.unlink(missing_ok=True)
-                    continue
-
-                if (
-                    data.shape[1] != 12
-                    or data.shape[0] != 5000 // constants.WINDOW_SIZE
-                ):
-                    print(
-                        f"[ !! ] Skipping and removing {file_path.name} due to invalid shape. {data.shape}"
-                    )
-                    file_path.unlink(missing_ok=True)
-                    continue
-
-                if np.max(data) - np.min(data) < 0.2 or np.all(data == data[0]):
-                    print(
-                        f"[ !! ] Skipping and removing {file_path.name} due to flat signal."
-                    )
-                    file_path.unlink(missing_ok=True)
-                    continue
+                if constants.FINAL_SIZE != data.shape[1]:
+                    data = self.bin_array(data, constants.FINAL_SIZE)
+                    if data is None:
+                        print(
+                            f"[ !! ] Skipping {file_path.name}: Sequence too short for binning. {data.shape}"
+                        )
+                        file_path.unlink(missing_ok=True)
+                        continue
 
                 root_dir = file_path.parent.parent.name
                 if root_dir == "train":
                     data = scaler.fit_transform(data)
-                else:
-                    data = scaler.transform(data)
 
-                if np.isnan(data).any():
-                    print(f"[ !! ] Skipping {file_path.name}: NaNs after scaling")
+                data = scaler.transform(data)
+
+                nan_check = np.isnan(data).any()
+                shape_check = data.shape == (constants.FINAL_SIZE, 12)
+                flat_check = np.max(data) - np.min(data) < 0.2 or np.all(
+                    data == data[0]
+                )
+
+                if nan_check or not shape_check or flat_check:
+                    print(f"[ !! ] Skipping {file_path.name}")
                     file_path.unlink(missing_ok=True)
                     continue
 
                 pd.DataFrame(data.astype(np.float32)).to_csv(
-                    file_path, header=False, index=False
+                    file_path, header=False, index=False, engine="c", low_memory=False
                 )
-                # print(f"\n[ OK ] Saved to {file_path}")
-            print(f"\n[ OK ] Preprocessing is done. {file_path}")
+
+            print(f"\n[ OK ] Preprocessing is done.")
 
         except Exception as e:
             print(f"An error occured while preprocessing dataset:{e}")
@@ -299,10 +278,12 @@ class DatasetProcessor:
 
 
 if __name__ == "__main__":
-    start_time = time.time()
     pp = DatasetProcessor()
+    start_time = time.time()
     pp._extract(constants.ZIP_PATH, constants.PROJECT_DIR)
     pp._extract(constants.ZIP_CONTENT, constants.ZIP_CONTENT_OUTPUT)
+    elapsed_time = time.time() - start_time
+    print(f"\n Elapsed_time - Extraction {elapsed_time}")
     pp.read_xlsx(constants.XLSX_PATH)
     pp.split_dataset(constants.DATASET)
     pp.proc_dataset(constants.DATASET)

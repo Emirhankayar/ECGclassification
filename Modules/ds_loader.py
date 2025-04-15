@@ -1,3 +1,10 @@
+import os
+
+n_threads = str(os.cpu_count())
+os.environ["OMP_NUM_THREADS"] = n_threads
+os.environ["MKL_NUM_THREADS"] = n_threads
+os.environ["OPENBLAS_NUM_THREADS"] = n_threads
+os.environ["NUMEXPR_NUM_THREADS"] = n_threads
 import pathlib
 import imblearn
 import Modules.constants as constants
@@ -7,23 +14,25 @@ import tensorflow as tf
 from collections import Counter
 
 # DATA_PATH = constants.DATASET
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent  # Adjust based on depth
+BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "Data" / "Dataset"
-print(DATA_PATH)
-print(f"[DEBUG] DATA_PATH = {DATA_PATH.resolve()}")
 
 
 def load_data(data_dir):
     X = []
     y = []
     data_dir = pathlib.Path(data_dir)
-    expected_shape = (5000 // constants.WINDOW_SIZE, 12)
+    expected_shape = (constants.FINAL_SIZE, 12)
     for label_dir in data_dir.iterdir():
         if label_dir.is_dir():
             label = int(label_dir.name)
             for csv_file in label_dir.glob("*.csv"):
                 try:
-                    data = pd.read_csv(csv_file, header=None).astype(np.float32).values
+                    data = (
+                        pd.read_csv(csv_file, header=None, engine="c", low_memory=False)
+                        .astype(np.float32)
+                        .values
+                    )
 
                     if data.shape != expected_shape:
                         print(

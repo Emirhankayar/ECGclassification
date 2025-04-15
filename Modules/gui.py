@@ -10,12 +10,17 @@
 [x]8. USE THE PREDICT BUTTON AND DISPLAY THE CLASSIFICATION MADE FOR THE PATIENT
 [x]9. MAP THE LABELS INTO CORRESPONDING ONES
 [x]10.LOAD DIFFERENT MODELS FROM A DIRECTORY
-[ ]11.LOAD DIFFERENT WINDOW SIZED MODELS (DATA NEEDS TO BE LOADED ACCORDING TO THAT) PROBABLY WE NEED TO MAKE ADJUSTABLE BINNING ?
-[ ]12.CREATE SOME SORT OF SAVE THE PATIENT RESULT TO CSV?
+[NOT NECESSARY MAYBE WHEN WE ADD ML ?]11.LOAD DIFFERENT WINDOW SIZED MODELS (DATA NEEDS TO BE LOADED ACCORDING TO THAT) PROBABLY WE NEED TO MAKE ADJUSTABLE BINNING ?
+[X]12.CREATE SOME SORT OF SAVE THE PATIENT RESULT TO CSV?
+
+# TODO
+[ ]13. Add grad cam to the model to highlight areas and then display them on the current pyqtgraph
+[ ]14. After all will be done refactor the code prepare it for deployment
+Maybe use flask?
+
 
 """
 
-import sys
 import pathlib
 import sklearn
 import itertools
@@ -27,7 +32,6 @@ import Modules.constants as constants
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QMainWindow,
-    QApplication,
     QLineEdit,
     QPushButton,
     QVBoxLayout,
@@ -43,26 +47,7 @@ from PyQt5.QtWidgets import (
 )
 
 
-tf.config.set_visible_devices([], "GPU")  # disables gpu
-"""
-Necessary buttons, add patient (singular or the whole dir), remove patient (singular or the whole dir but data is not deleted, instead the list is cleared),
-save patient (this requires another logic instead just now lets do a placeholder) 
-"""
-"""
-Add button
-1. browse the dirs
-2. select a dir add all patients / select a patient file add the single patient file
-
-"""
-"""
-Remove button 
-1. remove selected patient from the list
-"""
-"""
-Save button
-1. save the patient class after prediction on the column
-2. refresh diagnostics data table
-"""
+tf.config.set_visible_devices([], "GPU")  # disable GPU
 
 
 class App(QMainWindow):
@@ -91,7 +76,12 @@ class App(QMainWindow):
         self.patient_list.currentItemChanged.connect(self.load_patient_data)
 
         # Bottom Split: Controls
-        self.left_bottom_split = QHBoxLayout()  # horizontal layout for 3 buttons
+        """
+        IF LAYOUT IS QH = Horizontal layout
+        IF LAYOUT IS QV = Vertical layout 
+        imagine this as a grid that has a shape
+        """
+        self.left_bottom_split = QHBoxLayout()
         self.left_panel.addLayout(self.left_bottom_split)
 
         # LEFT CONTROLS LEFT PANEL
@@ -101,7 +91,11 @@ class App(QMainWindow):
         self.left_controls = QHBoxLayout()
         self.left_bottom_split.addLayout(self.left_controls, 2)
 
-        # there are glyphs might be invisible on code the editor
+        """
+        PLEASE DO NOT MODIFY THE BELOW 3 BUTTONS EMPTY QUOTES
+        THEY CONTAIN GLYPHS THAT DOES NOT APPEAR IN THE EDITOR UI
+        RESOURCE OF GLYPHS IS FONTAWESOME
+        """
         self.button_add = QPushButton("")
         self.button_remove = QPushButton("")
         self.button_save = QPushButton("")
@@ -155,7 +149,7 @@ class App(QMainWindow):
         self.left_controls.addWidget(self.prediction_label)
         self.left_controls.addWidget(self.true_label)
 
-        # RIGHT CONTROLS (placeholder for now)
+        # RIGHT CONTROLS
         self.right_controls = QVBoxLayout()
         self.right_bottom_split.addLayout(self.right_controls, 2)
         self.diagnostics_table = QTableWidget()
@@ -178,9 +172,8 @@ class App(QMainWindow):
         self.load_selected_model()
 
     def load_patient_list(self):
-        # This method should only load the list once
         if hasattr(self, "all_patients") and self.all_patients:
-            return  # Already loaded, so return early
+            return
 
         DATA_PATH = constants.DATASET / "test"
         if not DATA_PATH.exists():
@@ -220,14 +213,10 @@ class App(QMainWindow):
         self.selected_patient = selected_item.text()
         patient_file = self.selected_patient + ".csv"
         patient_label = None
-
-        # Clear diagnostics table when selecting a new patient
         if self.selected_patient != self.previous_patient:
             self.diagnostics_table.setRowCount(0)
             self.diagnostics_table.setColumnCount(0)
             self.load_diagnostics_button.setEnabled(True)
-
-            # Reset the button to "Load Patient Diagnostics" when a new patient is selected
             self.load_diagnostics_button.setText("Load Patient Diagnostics")
             self.load_diagnostics_button.setToolTip(
                 "Click to load diagnostics for this patient"
@@ -294,26 +283,20 @@ class App(QMainWindow):
                 attributes = list(self.extra_patient_info.keys())
                 values = list(self.extra_patient_info.values())
 
-                # Clear the existing table content
-                self.diagnostics_table.setRowCount(0)  # Clear the existing rows
-                self.diagnostics_table.setColumnCount(
-                    len(attributes)
-                )  # Set the column count
+                self.diagnostics_table.setRowCount(0)
+                self.diagnostics_table.setColumnCount(len(attributes))
 
                 self.diagnostics_table.setHorizontalHeaderLabels(attributes)
 
-                # Populate the table with the new data
-                self.diagnostics_table.setRowCount(1)  # Add one row for the diagnostics
+                self.diagnostics_table.setRowCount(1)
                 for col, value in enumerate(values):
                     self.diagnostics_table.setItem(0, col, QTableWidgetItem(str(value)))
 
-                # Update button text to "Refresh" after loading
                 self.load_diagnostics_button.setText("Refresh Patient Diagnostics")
                 self.load_diagnostics_button.setToolTip(
                     "Click to refresh diagnostics for this patient"
                 )
 
-                # Mark the diagnostics as loaded for the selected patient
                 self.previous_patient = self.selected_patient
             else:
                 self.extra_patient_info = {}
@@ -382,9 +365,8 @@ class App(QMainWindow):
             )
             print(f"Prediction: {f}, Prediction Class: {predicted_class}")
 
-            # Set predicted rhythm and enable save button
             self.predicted_rhythm = f
-            self.button_save.setEnabled(True)  # Enable save button after prediction
+            self.button_save.setEnabled(True)
 
             if predicted_class == self.true_label_value:
                 self.prediction_label.setStyleSheet("color:green; font-weight:regular;")
@@ -397,22 +379,18 @@ class App(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error during prediction: {e}")
 
     def add_data(self):
-        # Show a dialog to choose either a directory or a single patient file
         choice, _ = QFileDialog.getOpenFileName(
             self, "Select Patient File", "", "CSV Files (*.csv);;All Files (*)"
         )
 
         if choice:
-            # If a file is selected, add the patient file to the list
             patient_name = pathlib.Path(choice).stem
             if patient_name not in self.all_patients:
                 self.all_patients.append(patient_name)
                 self.update_patient_list(self.all_patients)
-        else:
-            # If no file is selected, ask to choose a directory
+        elif not patient_name:
             directory = QFileDialog.getExistingDirectory(self, "Select Directory")
             if directory:
-                # Get all .csv files from the directory
                 new_patients = []
                 for patient_file in pathlib.Path(directory).glob("*.csv"):
                     patient_name = patient_file.stem
@@ -423,16 +401,17 @@ class App(QMainWindow):
                     self.all_patients.extend(new_patients)
                     self.update_patient_list(self.all_patients)
 
+        else:
+            return False
+
     def rm_data(self):
-        # Get the selected patient in the list
         selected_item = self.patient_list.currentItem()
         if selected_item:
             patient_name = selected_item.text()
 
-            # Remove patient from the list and update the display
             if patient_name in self.all_patients:
                 self.all_patients.remove(patient_name)
-                self.update_patient_list(self.all_patients)  # Update the UI list
+                self.update_patient_list(self.all_patients)
                 print(f"Removed patient: {patient_name}")
             else:
                 QMessageBox.warning(self, "Warning", "Patient not found in list.")
@@ -444,7 +423,6 @@ class App(QMainWindow):
             QMessageBox.warning(self, "Warning", "No patient selected!")
             return
 
-        # Check if the diagnostics data is loaded
         if not self.extra_patient_info:
             QMessageBox.warning(self, "Warning", "No diagnostic data loaded!")
             return
@@ -452,7 +430,6 @@ class App(QMainWindow):
         try:
             diagnostics_df = pd.read_excel("Data/DiagnosticsTesting.xlsx")
 
-            # Find the row corresponding to the selected patient
             patient_row = diagnostics_df[
                 diagnostics_df["FileName"] == self.selected_patient
             ]
@@ -463,16 +440,13 @@ class App(QMainWindow):
                 )
                 return
 
-            # Update the 'Rhythm' column with the predicted rhythm
             diagnostics_df.loc[
                 diagnostics_df["FileName"] == self.selected_patient, "Rhythm"
             ] = self.predicted_rhythm
 
-            # Save the updated diagnostics data back to the Excel file
             diagnostics_df.to_excel("Data/DiagnosticsTesting.xlsx", index=False)
             QMessageBox.information(self, "Success", "Prediction saved successfully!")
 
-            # After saving, allow user to refresh the data
             self.load_diagnostics_button.setText("Refresh Patient Diagnostics")
             self.load_diagnostics_button.setToolTip(
                 "Click to refresh diagnostics for this patient"
@@ -480,13 +454,9 @@ class App(QMainWindow):
 
             self.diagnostics_table.setRowCount(0)
             self.diagnostics_table.setColumnCount(0)
-            # Reload patient diagnostics to reflect the updated rhythm
-            self.load_patient_diagnostics()  # This will refresh the data
+            self.load_patient_diagnostics()
 
-            # Disable save button again
             self.button_save.setEnabled(False)
-
-            # Update the previous_patient to ensure the correct table reload
             self.previous_patient = self.selected_patient
 
         except Exception as e:
