@@ -1,9 +1,10 @@
 import pathlib
 import numpy as np
 import pandas as pd
+import Modules.constants as constants
 
 
-def load_data(data_dir, expected_shape=(500, 12)):
+def load_data(data_dir, expected_shape=(5000 // constants.WINDOW_SIZE, 12)):
     X = []
     y = []
 
@@ -33,7 +34,7 @@ def load_data(data_dir, expected_shape=(500, 12)):
                 except Exception as e:
                     print(f"[ XX ] Failed to load {csv_file}: {e}")
 
-    X = np.stack(X, axis=0)
+    X = np.stack(X, axis=0, dtype=np.float32)
     y = np.array(y, dtype=np.int32)
 
     print(f"[ OK ] Loaded {X.shape[0]} samples with shape {X.shape[1:]}")

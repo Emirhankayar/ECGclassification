@@ -141,10 +141,10 @@ class DatasetProcessor:
                     continue
 
                 train_files, temp_files = sklearn.model_selection.train_test_split(
-                    files, test_size=0.3, random_state=42
+                    files, test_size=0.3, random_state=42, shuffle=True
                 )
                 val_files, test_files = sklearn.model_selection.train_test_split(
-                    temp_files, test_size=0.5, random_state=42
+                    temp_files, test_size=0.5, random_state=42, shuffle=True
                 )
 
                 splits = {
@@ -198,13 +198,16 @@ class DatasetProcessor:
 
             for file_path in files:
                 data = pd.read_csv(file_path, header=None).astype(np.float32).values
-                p = data.shape  # temporary variable for later
 
                 if data.size == 0:
                     print(f"[ !! ] Skipping {file_path.name}: Empty file")
                     file_path.unlink(missing_ok=True)
                     continue
-                data = self.bin_array(data, constants.WINDOW_SIZE)  # BINNING
+
+                if constants.WINDOW_SIZE == 1:
+                    data = data
+                else:
+                    data = self.bin_array(data, constants.WINDOW_SIZE)  # BINNING
 
                 if data.size == 0 or np.isnan(data).any():
                     print(
@@ -213,7 +216,10 @@ class DatasetProcessor:
                     file_path.unlink(missing_ok=True)
                     continue
 
-                if data.shape[1] != 12 or data.shape[0] != p // constants.WINDOW_SIZE:
+                if (
+                    data.shape[1] != 12
+                    or data.shape[0] != 5000 // constants.WINDOW_SIZE
+                ):
                     print(
                         f"[ !! ] Skipping and removing {file_path.name} due to invalid shape."
                     )
@@ -247,11 +253,39 @@ class DatasetProcessor:
         except Exception as e:
             print(f"An error occured while preprocessing dataset:{e}")
 
+    def dummy_excel(self, input_dir):
+        try:
+            if not input_dir.exists():
+                print(f"[ !! ] File not found: {input_dir}")
+                return
+
+            backup_path = input_dir.with_name(
+                f"{input_dir.stem}Testing{input_dir.suffix}"
+            )
+
+            # Copy the original file to backup
+            shutil.copy2(input_dir, backup_path)
+            print(f"\n[ OK ] Backup created at: {backup_path}")
+
+            # Load, clear, and save
+            df = pd.read_excel(input_dir)
+
+            if "Rhythm" in df.columns:
+                df["Rhythm"] = np.nan
+                df.to_excel(backup_path, index=False)
+                print(f"[ OK ] 'Rhythm' column cleared in {backup_path}")
+            else:
+                print("[ !! ] Column 'Rhythm' not found in the Excel file.")
+
+        except Exception as e:
+            print(f"[ !! ] Error occurred: {e}")
+
     def get_dir_size(self, path):
-        total = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) / (
-            1024 * 3
+        total_bytes = sum(
+            f.stat().st_size for f in Path(path).rglob("*") if f.is_file()
         )
-        print(total)
+        total_gb = total_bytes / (1024**3)
+        print(f"Directory size: {total_gb:.2f} GB")
 
     def rm_dirs(self, directories: list[Path]):
         for directory in directories:
@@ -278,7 +312,7 @@ if __name__ == "__main__":
     pp.read_xlsx(constants.XLSX_PATH)
     pp.split_dataset(constants.DATASET)
     pp.proc_dataset(constants.DATASET)
-
+    pp.dummy_excel(constants.XLSX_PATH)
     rm_dir_list = [constants.CSV_PATH, constants.ZIP_CONTENT]
     pp.rm_dirs(rm_dir_list)
     pp.get_dir_size(constants.ZIP_CONTENT_OUTPUT)
