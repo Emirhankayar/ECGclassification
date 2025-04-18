@@ -15,6 +15,17 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+"""
+STEPS TO PROCEED IN THIS MODULE
+STEP 1 EXTRACT FILES - WORKS GOOD
+STEP 2 MATCH FILENAME COLUMN FILES WITH THE FILES IN THE PATH SO WE CAN ASSIGN THEM CLASSES
+STEP 3 TO ASSIGN CLASSES USE THE MAPPING IMPORTED FROM CONSTANTS
+STEP 4 PLACE THEM INTO 0,1,2,3 DIRECTORIES SO WE CAN TRACK THE CLASS FROM DIR
+STEP 5 SEPARATE THEM INTO TRAIN,VAL,TEST AND PLACE THEM INTO DIRECTORIES
+STEP 6 PREPROCESS THEM
+STEP 7 SOME EXTRA FUNCTIONS TO CLEANUP
+"""
+
 
 class DatasetProcessor:
     def __init__(self):
@@ -56,10 +67,6 @@ class DatasetProcessor:
         Step 4: Move files to respective directories based on Rhythm.
         """
         try:
-            if not input_dir.exists():
-                print(f"\n[ !! ] Error: The file '{input_dir}' was not found.")
-                return
-
             df = pd.read_excel(input_dir, usecols=["FileName", "Rhythm"])
             df["Rhythm"] = df["Rhythm"].replace(constants.RHY_DICT)
 
@@ -67,20 +74,22 @@ class DatasetProcessor:
                 (constants.DATASET / str(i)).mkdir(parents=True, exist_ok=True)
 
             patient_files = list(constants.CSV_PATH.glob("*.csv"))
-
             patient_map = {f.stem: f for f in patient_files}
 
             print(f"[ ii ] Moving files to corresponding directories.")
             for _, row in df.iterrows():
                 file_name = row["FileName"]
                 rhythm = row["Rhythm"]
+
                 if file_name in patient_map:
                     file_path = patient_map[file_name]
                     target_dir = constants.DATASET / str(rhythm)
                     destination = target_dir / file_path.name
                     file_path.rename(destination)
                 else:
-                    print(f"File {file_name} not found.")
+                    print(f"[ !! ] File {file_name} not found in CSV directory.")
+                # else:
+                # print(f"File {file_name} not found.")
 
             moved_files = {
                 f.stem
@@ -121,10 +130,10 @@ class DatasetProcessor:
                     continue
 
                 train_files, temp_files = sklearn.model_selection.train_test_split(
-                    files, test_size=0.2, random_state=42, shuffle=True
+                    files, test_size=0.3, random_state=42, shuffle=True
                 )
                 val_files, test_files = sklearn.model_selection.train_test_split(
-                    temp_files, test_size=0.5, random_state=42, shuffle=True
+                    temp_files, test_size=0.3, random_state=42, shuffle=True
                 )
 
                 splits = {
@@ -159,49 +168,25 @@ class DatasetProcessor:
             pad_length = final_size - sequence_length
             padding = np.zeros((pad_length, num_channels), dtype=np.float32)
             data = np.vstack([data, padding])
-            sequence_length = data.shape[0]
+            sequence_length = final_size
+            return data
 
-        if final_size == sequence_length:
+        if sequence_length == final_size:
             return data
 
         window_size = sequence_length // final_size
-        new_sequence_length = sequence_length // window_size
+        new_sequence_length = final_size
 
         reshaped = data[: new_sequence_length * window_size].reshape(
             new_sequence_length, window_size, num_channels
         )
-        return np.mean(reshaped, axis=1)
+        final = np.mean(reshaped, axis=1)
+        return final
 
     def proc_dataset(self, input_dir):
         print("\n[ ii ] Preprocessing dataset...")
 
         try:
-            scaler = sklearn.preprocessing.MinMaxScaler()
-            train_files = list(Path(input_dir).rglob("train/**/*.csv"))
-
-            train_data = []
-            for file_path in train_files:
-                data = (
-                    pd.read_csv(file_path, header=None, engine="c", low_memory=False)
-                    .astype(np.float32)
-                    .values
-                )
-
-                if data.shape != (constants.FINAL_SIZE, 12):
-                    data = self.bin_array(data, constants.FINAL_SIZE)
-                    if data is None:
-                        continue
-
-                train_data.append(data)
-
-            if not train_data:
-                print("[ !! ] No valid training data found to fit scaler.")
-                return
-
-            all_train_data = np.vstack(train_data)
-            scaler.fit(all_train_data)
-            print("[ OK ] Scaler fitted on training data.")
-
             files = list(Path(input_dir).rglob("*.csv"))
             for file_path in files:
                 data = (
@@ -210,16 +195,14 @@ class DatasetProcessor:
                     .values
                 )
 
-                if data.shape != (constants.FINAL_SIZE, 12):
-                    data = self.bin_array(data, constants.FINAL_SIZE)
-                    if data is None:
-                        print(
-                            f"[ !! ] Skipping {file_path.name}: Sequence too short for binning."
-                        )
-                        file_path.unlink(missing_ok=True)
-                        continue
+                data = self.bin_array(data, constants.FINAL_SIZE)
 
-                data = scaler.transform(data)
+                if data.shape != (constants.FINAL_SIZE, 12):
+                    print(
+                        f"[ !! ] Skipping {file_path.name}: Sequence too short for binning."
+                    )
+                    file_path.unlink(missing_ok=True)
+                    continue
 
                 nan_check = np.isnan(data).any()
                 shape_check = data.shape == (constants.FINAL_SIZE, 12)

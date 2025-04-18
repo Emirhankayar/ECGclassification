@@ -3,7 +3,7 @@ FINAL_SIZE =5000 // DYNAMIC WINDOW SIZE
 (FINAL_SIZE, 12)
 """
 
-FINAL_SIZE = 1000
+FINAL_SIZE = 500
 
 from pathlib import Path
 
@@ -12,6 +12,7 @@ ZIP_PATH = PROJECT_DIR / "Data.zip"
 XLSX_PATH = PROJECT_DIR / "Data/Diagnostics.xlsx"
 ZIP_CONTENT = PROJECT_DIR / "Data/ECGDataDenoised.zip"
 CSV_PATH = PROJECT_DIR / "Data/ECGDataDenoised"
+LABEL = PROJECT_DIR / "Data/Label_Map.xlsx"
 ZIP_CONTENT_OUTPUT = PROJECT_DIR / "Data/"
 DATASET = PROJECT_DIR / "Data/Dataset"
 

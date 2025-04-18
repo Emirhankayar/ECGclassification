@@ -11,6 +11,7 @@ import Modules.constants as constants
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import sklearn
 from collections import Counter
 
 # DATA_PATH = constants.DATASET
@@ -19,8 +20,7 @@ DATA_PATH = BASE_DIR / "Data" / "Dataset"
 
 
 def load_data(data_dir):
-    X = []
-    y = []
+    X, y = [], []
     data_dir = pathlib.Path(data_dir)
     expected_shape = (constants.FINAL_SIZE, 12)
     for label_dir in data_dir.iterdir():
@@ -62,23 +62,56 @@ def load_tf_data():
     tr = DATA_PATH / "train"
     vl = DATA_PATH / "val"
     tst = DATA_PATH / "test"
+
     X_train, y_train = load_data(tr)
-    X_test, y_test = load_data(tst)
     X_val, y_val = load_data(vl)
+    X_test, y_test = load_data(tst)
+
     print("Unique classes in y:", np.unique(y_train))
     print("Datatype:", (X_train.dtype), (y_train.dtype))
+    print(f"NaNs in X: {np.isnan(X_train).sum()}")
+    print(f"Infs in X: {np.isinf(X_train).sum()}")
+    print(f"Class distribution of training before SMOTE: {Counter(y_train)}")
+    print(f"Class distribution of validation: {Counter(y_val)}")
+    print(f"Class distribution of test: {Counter(y_test)}")
+
+    print("\n[ ii ] Applying MinMax scaling to the dataset...")
+    scaler = sklearn.preprocessing.MinMaxScaler()
+
+    X_train_reshaped = X_train.reshape(-1, X_train.shape[-1])
+    X_val_reshaped = X_val.reshape(-1, X_val.shape[-1])
+    X_test_reshaped = X_test.reshape(-1, X_test.shape[-1])
+
+    print(
+        f"Before scaling - X_train shape: {X_train.shape}, X_val shape: {X_val.shape}, X_test shape: {X_test.shape}"
+    )
+    print(
+        f"After reshaping - X_train reshaped shape: {X_train_reshaped.shape}, X_val reshaped shape: {X_val_reshaped.shape}, X_test reshaped shape: {X_test_reshaped.shape}"
+    )
+
+    X_train_reshaped = scaler.fit_transform(X_train_reshaped)
+    X_val_reshaped = scaler.transform(X_val_reshaped)
+    X_test_reshaped = scaler.transform(X_test_reshaped)
+
+    X_train = X_train_reshaped.reshape(X_train.shape[0], *X_train.shape[1:])
+    X_val = X_val_reshaped.reshape(X_val.shape[0], *X_val.shape[1:])
+    X_test = X_test_reshaped.reshape(X_test.shape[0], *X_test.shape[1:])
+
     print(f"Min and Max of X_train: {np.min(X_train)}, {np.max(X_train)}")
     print(f"Min and Max of X_val: {np.min(X_val)}, {np.max(X_val)}")
     print(f"Min and Max of X_test: {np.min(X_test)}, {np.max(X_test)}")
-    print(f"NaNs in X: {np.isnan(X_train).sum()}")
-    print(f"Infs in X: {np.isinf(X_train).sum()}")
-    print(f"Class distribution before SMOTE: {Counter(y_train)}")
-    print(f"\n\n Applying oversampling via SMOTE")
-    X_train_flat = X_train.reshape((X_train.shape[0], -1))
-    smote = imblearn.over_sampling.SMOTE(random_state=42)
-    X_resampled, y_train = smote.fit_resample(X_train_flat, y_train)
-    X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
 
-    print(f"Class distribution after SMOTE: {Counter(y_train)}")
+    print(f"\n\n[ ii ] Applying oversampling via SMOTE")
+
+    # Check if reshaped data and labels have consistent sample counts
+    if X_train.shape[0] != len(y_train):
+        print(f"[ !! ] Warning: Mismatch between X_train samples and y_train labels.")
+    else:
+        X_train_flat = X_train.reshape((X_train.shape[0], -1))  # Flatten the data
+        smote = imblearn.over_sampling.SMOTE(random_state=42)
+        X_resampled, y_train = smote.fit_resample(X_train_flat, y_train)
+        X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
+
+        print(f"Class distribution after SMOTE: {Counter(y_train)}")
 
     return X_train, y_train, X_val, y_val, X_test, y_test
