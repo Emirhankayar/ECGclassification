@@ -461,13 +461,3 @@ class App(QMainWindow):
 
         except Exception as e:
             QMessageBox.warning(self, "Warning", f"Failed to save prediction: {e}")
-
-
-"""
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = App()
-    window.showFullScreen()
-    #    window.show()
-    sys.exit(app.exec_())
-"""

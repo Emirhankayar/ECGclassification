@@ -1,117 +1,35 @@
-import os
-
-n_threads = str(os.cpu_count())
-os.environ["OMP_NUM_THREADS"] = n_threads
-os.environ["MKL_NUM_THREADS"] = n_threads
-os.environ["OPENBLAS_NUM_THREADS"] = n_threads
-os.environ["NUMEXPR_NUM_THREADS"] = n_threads
-import pathlib
-import imblearn
-import Modules.constants as constants
-import numpy as np
 import pandas as pd
-import tensorflow as tf
-import sklearn
-from collections import Counter
-
-# DATA_PATH = constants.DATASET
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-DATA_PATH = BASE_DIR / "Data" / "Dataset"
+import numpy as np
+import pathlib
 
 
-def load_data(data_dir):
-    X, y = [], []
-    data_dir = pathlib.Path(data_dir)
-    expected_shape = (constants.FINAL_SIZE, 12)
-    for label_dir in data_dir.iterdir():
-        if label_dir.is_dir():
-            label = int(label_dir.name)
-            for csv_file in label_dir.glob("*.csv"):
-                try:
-                    data = (
-                        pd.read_csv(csv_file, header=None, engine="c", low_memory=False)
-                        .astype(np.float32)
-                        .values
-                    )
+class DatasetLoader:
+    def __init__(self, xlsx_path, data_dir):
+        self.xlsx_path = pathlib.Path(xlsx_path)
+        self.data_dir = pathlib.Path(data_dir)
+        self.df = pd.read_excel(self.xlsx_path, usecols=["FileName", "Rhythm"])
 
-                    if data.shape != expected_shape:
-                        print(
-                            f"[ !! ]Skipping {csv_file.name}: Unexpected shape {data.shape}"
-                        )
-                        continue
+    def load_data(self):
+        X = []
+        y = []
 
-                    if np.isnan(data).any():
-                        print(f"[ !! ]Skipping {csv_file.name}: Contains NaNs")
-                        continue
+        for _, row in self.df.iterrows():
+            file_name = row["FileName"]
+            label = row["Rhythm"]
 
-                    X.append(data)
-                    y.append(label)
+            file_path = self.data_dir / f"{file_name}.csv"
+            if file_path.exists():
+                data = pd.read_csv(file_path, header=None).values
 
-                except Exception as e:
-                    print(f"[ XX ] Failed to load {csv_file}: {e}")
+                X.append(data)
+                y.append(label)
 
-    X = np.stack(X, axis=0, dtype=np.float32)
-    y = np.array(y, dtype=np.int32)
+        X = np.array(X, dtype=np.float32)
+        y = np.array(y, dtype=np.int32)
 
-    print(f"[ OK ] Loaded {X.shape[0]} samples with shape {X.shape[1:]}")
-
-    return X, y
+        return X, y
 
 
-def load_tf_data():
-    tr = DATA_PATH / "train"
-    vl = DATA_PATH / "val"
-    tst = DATA_PATH / "test"
-
-    X_train, y_train = load_data(tr)
-    X_val, y_val = load_data(vl)
-    X_test, y_test = load_data(tst)
-
-    print("Unique classes in y:", np.unique(y_train))
-    print("Datatype:", (X_train.dtype), (y_train.dtype))
-    print(f"NaNs in X: {np.isnan(X_train).sum()}")
-    print(f"Infs in X: {np.isinf(X_train).sum()}")
-    print(f"Class distribution of training before SMOTE: {Counter(y_train)}")
-    print(f"Class distribution of validation: {Counter(y_val)}")
-    print(f"Class distribution of test: {Counter(y_test)}")
-
-    print("\n[ ii ] Applying MinMax scaling to the dataset...")
-    scaler = sklearn.preprocessing.MinMaxScaler()
-
-    X_train_reshaped = X_train.reshape(-1, X_train.shape[-1])
-    X_val_reshaped = X_val.reshape(-1, X_val.shape[-1])
-    X_test_reshaped = X_test.reshape(-1, X_test.shape[-1])
-
-    print(
-        f"Before scaling - X_train shape: {X_train.shape}, X_val shape: {X_val.shape}, X_test shape: {X_test.shape}"
-    )
-    print(
-        f"After reshaping - X_train reshaped shape: {X_train_reshaped.shape}, X_val reshaped shape: {X_val_reshaped.shape}, X_test reshaped shape: {X_test_reshaped.shape}"
-    )
-
-    X_train_reshaped = scaler.fit_transform(X_train_reshaped)
-    X_val_reshaped = scaler.transform(X_val_reshaped)
-    X_test_reshaped = scaler.transform(X_test_reshaped)
-
-    X_train = X_train_reshaped.reshape(X_train.shape[0], *X_train.shape[1:])
-    X_val = X_val_reshaped.reshape(X_val.shape[0], *X_val.shape[1:])
-    X_test = X_test_reshaped.reshape(X_test.shape[0], *X_test.shape[1:])
-
-    print(f"Min and Max of X_train: {np.min(X_train)}, {np.max(X_train)}")
-    print(f"Min and Max of X_val: {np.min(X_val)}, {np.max(X_val)}")
-    print(f"Min and Max of X_test: {np.min(X_test)}, {np.max(X_test)}")
-
-    print(f"\n\n[ ii ] Applying oversampling via SMOTE")
-
-    # Check if reshaped data and labels have consistent sample counts
-    if X_train.shape[0] != len(y_train):
-        print(f"[ !! ] Warning: Mismatch between X_train samples and y_train labels.")
-    else:
-        X_train_flat = X_train.reshape((X_train.shape[0], -1))  # Flatten the data
-        smote = imblearn.over_sampling.SMOTE(random_state=42)
-        X_resampled, y_train = smote.fit_resample(X_train_flat, y_train)
-        X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
-
-        print(f"Class distribution after SMOTE: {Counter(y_train)}")
-
-    return X_train, y_train, X_val, y_val, X_test, y_test
+# Example usage:
+# dataset_loader = DatasetLoader(xlsx_path='path_to_label_file.xlsx', data_dir='path_to_data_directory')
+# X, y = dataset_loader.load_data()
