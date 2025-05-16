@@ -1,15 +1,15 @@
-import sklearn
-import numpy as np
-import keras_tuner
-import tensorflow as tf
-import matplotlib.pyplot as plt
 import collections
-import imblearn
+import os
+import sys
 
-import os, sys
+import imblearn
+import keras_tuner
+import numpy as np
+import sklearn
+import tensorflow as tf
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath("Modules"))))
-import Modules.ds_loader_new as ds_loader
+import Modules.ds_loader as ds_loader
 
 dataset_loader = ds_loader.DatasetLoader(
     xlsx_path="../Data/Label_Map.xlsx", data_dir="../Data/ECGDataDenoised"
@@ -62,32 +62,32 @@ X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
 print(f"Class distribution after SMOTE: {collections.Counter(y_train)}")
 INPUT_SIZE, LAYERS = 500, 3
 RDIR = f"../src/Results/RES_{INPUT_SIZE}_{LAYERS}"
-MDIR = RDIR + f"RES_{INPUT_SIZE}_{LAYERS}.keras"
-CDIR = RDIR + f"C_RES_{INPUT_SIZE}_{LAYERS}.keras"
-CVDIR = RDIR + f"RES_500_{INPUT_SIZE}_CV.keras"
+MDIR = f"../RES_{INPUT_SIZE}_{LAYERS}.keras"
+CDIR = f"../C_RES_{INPUT_SIZE}_{LAYERS}.keras"
+CVDIR = f"../RES_{INPUT_SIZE}_CV.keras"
 
-from rescnn import ResnetTuner
+from baseline import ResnetTuner
 
-model = ResnetTuner()
+# model = ResnetTuner()
 # model = model.build_model()
 # print(model.summary())
 
 tuner = keras_tuner.BayesianOptimization(
     ResnetTuner(),
     objective="val_accuracy",
-    max_trials=50,
+    max_trials=100,
     overwrite=False,
     directory=RDIR,
-    project_name=f"RES_{INPUT_SIZE}_{LAYERS}_00",
+    project_name=f"RES_{INPUT_SIZE}_{LAYERS}",
 )
 
 
 lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
-    monitor="val_loss", factor=0.5, patience=5, min_lr=1e-6, verbose=1
+    monitor="val_loss", factor=0.1, patience=5, min_lr=1e-8, verbose=1
 )
 
 early_stopping = tf.keras.callbacks.EarlyStopping(
-    monitor="val_loss", patience=5, restore_best_weights=True, verbose=1
+    monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
 )
 
 model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
@@ -97,7 +97,7 @@ model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
 tuner.search(
     X_train,
     y_train,
-    epochs=150,
+    epochs=200,
     validation_data=(X_val, y_val),
     callbacks=[lr_scheduler, early_stopping, model_checkpoint],
 )
@@ -112,15 +112,12 @@ best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
 print(f"\n{best_hps.values}")
 
 
-"""
-
-
-history = model.fit(
+"""history = model.fit(
     X_train,
     y_train,
-    validation_data=(X_val, y_val),
-    epochs=130,
+    epochs=200,
     batch_size=32,
+    validation_data=(X_val, y_val),
     callbacks=[lr_scheduler, early_stopping, model_checkpoint],
 )
 """

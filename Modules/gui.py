@@ -21,31 +21,32 @@ Maybe use flask?
 
 """
 
-import pathlib
-import sklearn
 import itertools
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
+import sklearn
 import tensorflow as tf
-import Modules.constants as constants
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
-    QMainWindow,
-    QLineEdit,
-    QPushButton,
-    QVBoxLayout,
     QComboBox,
-    QWidget,
-    QLabel,
     QFileDialog,
-    QListWidget,
     QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
     QMessageBox,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
+import Modules.constants as constants
 
 tf.config.set_visible_devices([], "GPU")  # disable GPU
 
@@ -72,7 +73,9 @@ class App(QMainWindow):
         self.search_bar.textChanged.connect(self.update_search_list)
         self.left_panel.addWidget(self.search_bar)
         self.left_panel.addWidget(self.patient_list)
-        self.load_patient_list()
+        # self.load_patient_list()
+        self.update_patient_list([])  # Start with empty patient list
+
         self.patient_list.currentItemChanged.connect(self.load_patient_data)
 
         # Bottom Split: Controls
@@ -163,36 +166,31 @@ class App(QMainWindow):
         self.right_controls.addWidget(self.diagnostics_table)
 
         self.X_test = None
+        self.all_patients = []
+        self.patient_dir_map = {}
         self.true_label_value = None
         self.model = None
         self.selected_patient = None
         self.extra_patient_info = {}
         self.previous_patient = None
+        self.mounted_dirs = []
 
         self.load_selected_model()
 
-    def load_patient_list(self):
-        if hasattr(self, "all_patients") and self.all_patients:
+    def load_patient_list(self, dir_path: pathlib.Path):
+        label_path = dir_path / "Label_Map.xlsx"
+        if not label_path.exists():
+            QMessageBox.critical(self, "Error", f"Label map not found at {label_path}")
             return
 
-        DATA_PATH = constants.DATASET / "test"
-        if not DATA_PATH.exists():
-            print("\n [ !! ] Dataset directory not found!")
-            return
-
-        self.subdirs = [d.name for d in DATA_PATH.iterdir() if d.is_dir()]
-        patient_files = sorted(
-            (
-                file
-                for dir in self.subdirs
-                for file in (DATA_PATH / dir).glob("*.csv")
-                if (DATA_PATH / dir).exists()
-            ),
-            key=lambda f: f.stem,
-        )
-
-        self.all_patients = [file.stem for file in patient_files]
-        self.update_patient_list(self.all_patients)
+        try:
+            label_df = pd.read_excel(label_path)
+            self.label_df = label_df
+            self.all_patients = label_df["FileName"].astype(str).tolist()
+            self.all_patients = sorted(set(self.all_patients))
+            self.update_patient_list(self.all_patients)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load label map: {e}")
 
     def update_patient_list(self, patient_ids):
         self.patient_list.clear()
@@ -209,43 +207,47 @@ class App(QMainWindow):
         selected_item = self.patient_list.currentItem()
         if not selected_item:
             return
-
-        self.selected_patient = selected_item.text()
-        patient_file = self.selected_patient + ".csv"
-        patient_label = None
-        if self.selected_patient != self.previous_patient:
+        if self.selected_patient != selected_item.text():
+            # Clear diagnostics if patient changes
+            self.extra_patient_info = {}
             self.diagnostics_table.setRowCount(0)
             self.diagnostics_table.setColumnCount(0)
-            self.load_diagnostics_button.setEnabled(True)
             self.load_diagnostics_button.setText("Load Patient Diagnostics")
             self.load_diagnostics_button.setToolTip(
                 "Click to load diagnostics for this patient"
             )
 
-        for label in range(4):
-            data_dir = pathlib.Path(f"Data/Dataset/test/{label}")
-            file_path = data_dir / patient_file
+        self.selected_patient = selected_item.text()
+        patient_file = f"{self.selected_patient}.csv"
+        data_path = pathlib.Path("Data/ECGDataDenoised") / patient_file
 
-            if file_path.exists():
-                patient_label = label
-                break
-
-        if patient_label is None:
+        if not data_path.exists():
             QMessageBox.critical(
                 self,
                 "[ Error! ]",
-                f"\n [ !! ] Patient file {patient_file} not found in any directory!",
+                f"\n [ !! ] Patient file {patient_file} not found!",
             )
             return
 
         try:
-            df = pd.read_csv(file_path, header=None)
+            df = pd.read_csv(data_path, header=None)
             self.X_test = df.to_numpy()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load CSV data: {e}")
             return
 
-        self.true_label_value = patient_label
+        # Get label from loaded label map
+        patient_row = self.label_df[self.label_df["FileName"] == self.selected_patient]
+        if patient_row.empty:
+            self.true_label_value = None
+            self.true_label.setText("True Label: Unknown")
+        else:
+            self.true_label_value = int(patient_row["Rhythm"].iloc[0])
+            self.label_map = {0: "AFIB", 1: "GSVT", 2: "SB", 3: "SR"}
+            label_text = self.label_map.get(self.true_label_value, "Unknown")
+            self.true_label.setText(
+                f"True Label: {label_text}, True Label Class: {self.true_label_value}"
+            )
 
         self.plot_graph.clear()
         scaler = sklearn.preprocessing.MinMaxScaler(feature_range=(-1, 1))
@@ -258,11 +260,6 @@ class App(QMainWindow):
         self.plot_graph.setYRange(-1.5, 1.5)
         self.plot_graph.plot(x_values, y_values, pen="g", width=1.5, name="ECG Signal")
 
-        self.label_map = {0: "AFIB", 1: "GSVT", 2: "SB", 3: "SR"}
-        f = self.label_map.get(self.true_label_value, "Unknown")
-        self.true_label.setText(
-            f"True Label: {f}, True Label Class: {self.true_label_value}"
-        )
         self.prediction_label.setText("Prediction: --, --")
 
     def load_patient_diagnostics(self):
@@ -379,44 +376,82 @@ class App(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error during prediction: {e}")
 
     def add_data(self):
-        choice, _ = QFileDialog.getOpenFileName(
-            self, "Select Patient File", "", "CSV Files (*.csv);;All Files (*)"
-        )
+        directory = QFileDialog.getExistingDirectory(self, "Select Patient Directory")
+        if not directory:
+            return
 
-        if choice:
-            patient_name = pathlib.Path(choice).stem
-            if patient_name not in self.all_patients:
-                self.all_patients.append(patient_name)
-                self.update_patient_list(self.all_patients)
-        elif not patient_name:
-            directory = QFileDialog.getExistingDirectory(self, "Select Directory")
-            if directory:
-                new_patients = []
-                for patient_file in pathlib.Path(directory).glob("*.csv"):
-                    patient_name = patient_file.stem
-                    if patient_name not in self.all_patients:
-                        new_patients.append(patient_name)
+        dir_path = pathlib.Path(directory)
 
-                if new_patients:
-                    self.all_patients.extend(new_patients)
-                    self.update_patient_list(self.all_patients)
+        patient_files = list(dir_path.glob("*.csv"))
+        if not patient_files:
+            QMessageBox.warning(self, "Warning", "No .csv files found in directory.")
+            return
 
-        else:
-            return False
+        new_patients = []
+        for file in patient_files:
+            patient_name = file.stem
+            if patient_name in self.patient_dir_map:
+                QMessageBox.warning(
+                    self,
+                    "Conflict",
+                    f"Duplicate patient ID '{patient_name}' found in multiple directories.\nCannot add this directory.",
+                )
+                return
+
+        for file in patient_files:
+            patient_name = file.stem
+            self.all_patients.append(patient_name)
+            self.patient_dir_map[patient_name] = dir_path
+
+        self.mounted_dirs.append(dir_path)
+        self.load_patient_list(dir_path)
+        print(f"[ OK ] Loaded {len(patient_files)} patients from {dir_path}")
 
     def rm_data(self):
-        selected_item = self.patient_list.currentItem()
-        if selected_item:
-            patient_name = selected_item.text()
+        if not self.mounted_dirs:
+            QMessageBox.information(self, "Info", "No directories to remove.")
+            return
 
-            if patient_name in self.all_patients:
-                self.all_patients.remove(patient_name)
-                self.update_patient_list(self.all_patients)
-                print(f"Removed patient: {patient_name}")
-            else:
-                QMessageBox.warning(self, "Warning", "Patient not found in list.")
-        else:
-            QMessageBox.warning(self, "Warning", "No patient selected for removal!")
+        removed_patients = []
+        for dir_path in self.mounted_dirs:
+            for pid, path in list(self.patient_dir_map.items()):
+                if path == dir_path:
+                    removed_patients.append(pid)
+                    del self.patient_dir_map[pid]
+                    if pid in self.all_patients:
+                        self.all_patients.remove(pid)
+
+        self.mounted_dirs.clear()
+
+        # Reset UI elements to initial state
+        self.update_patient_list([])
+        self.patient_list.clear()
+        self.search_bar.clear()
+        self.plot_graph.clear()
+
+        self.prediction_label.setText("Prediction: --, --")
+        self.prediction_label.setStyleSheet("color:black; font-weight:regular;")
+        self.true_label.setText("True Label: --, --")
+        self.button_save.setEnabled(False)
+
+        self.diagnostics_table.setRowCount(0)
+        self.diagnostics_table.setColumnCount(0)
+        self.load_diagnostics_button.setText("Load Patient Diagnostics")
+        self.load_diagnostics_button.setToolTip(
+            "Click to load diagnostics for this patient"
+        )
+
+        self.X_test = None
+        self.selected_patient = None
+        self.previous_patient = None
+        self.extra_patient_info = {}
+        self.true_label_value = None
+
+        QMessageBox.information(
+            self,
+            "Unmounted",
+            f"Removed {len(removed_patients)} patients and reset UI.",
+        )
 
     def save_data(self):
         if self.selected_patient is None:

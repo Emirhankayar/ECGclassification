@@ -1,21 +1,28 @@
+import concurrent.futures
 import os
-
-n_threads = str(os.cpu_count())
-os.environ["OMP_NUM_THREADS"] = n_threads
-os.environ["MKL_NUM_THREADS"] = n_threads
-os.environ["OPENBLAS_NUM_THREADS"] = n_threads
-os.environ["NUMEXPR_NUM_THREADS"] = n_threads
-import time
+import pathlib
 import shutil
+import time
 import zipfile
-import constants
-import concurrent
+import sklearn
 import numpy as np
 import pandas as pd
-import pathlib
+
+import constants
+
+N_THREADS = str(os.cpu_count())
+os.environ["OMP_NUM_THREADS"] = N_THREADS
+os.environ["MKL_NUM_THREADS"] = N_THREADS
+os.environ["OPENBLAS_NUM_THREADS"] = N_THREADS
+os.environ["NUMEXPR_NUM_THREADS"] = N_THREADS
 
 
 class DatasetProcessor:
+    """
+    patient_dict = dictionary of each patient
+    _initialize = fancy way to start
+    """
+
     def __init__(self):
         self.patient_dict = {}
         self._initialize()
@@ -24,11 +31,11 @@ class DatasetProcessor:
         print("\n[ ii ] Initializing data preprocessing module...")
         print(f"\n\n[ ?? ] (#,{constants.FINAL_SIZE},12) is the final data shape.")
 
-    def _extract(self, input_dir, output_dir):
+    def extract(self, input_dir, output_dir):
         with zipfile.ZipFile(input_dir, "r") as zf:
             members = [m for m in zf.infolist() if not m.is_dir()]
 
-            print(f"[ >> ] Preparing to unzip {len(members)} files with threads...")
+            print(f"[ >> ] Preparing to unzip {len(members)} files with threads")
 
             def extract_member(member):
                 target_path = pathlib.Path(output_dir) / member.filename
@@ -48,12 +55,17 @@ class DatasetProcessor:
         return total
 
     def get_csvs(self, input_dir):
+        """
+        get all the csvs,
+        input_dir = path/to/csvs/
+        """
+
         csv_files = list(pathlib.Path(input_dir).rglob("*.csv"))
         result = []
 
         def read_csv_file(file_path):
             data = (
-                pd.read_csv(file_path, header=None, engine="c", low_memory=False)
+                pd.read_csv(file_path, header=None, engine="c")
                 .astype(np.float32)
                 .values
             )
@@ -71,6 +83,12 @@ class DatasetProcessor:
         return result
 
     def bin_array(self, data, final_size):
+        """
+        final_size = define it in Modules/constants.py eg. final_size = 500
+        Helps to obtain = 500,12 final shape
+        data = content of each csv
+        """
+
         sequence_length, num_channels = data.shape
         if sequence_length < final_size:
             pad_length = final_size - sequence_length
@@ -83,8 +101,6 @@ class DatasetProcessor:
         reshaped = data[: new_sequence_length * window_size].reshape(
             new_sequence_length, window_size, num_channels
         )
-        final = np.mean(reshaped, axis=1)
-        print(final.shape)
         return np.mean(reshaped, axis=1)
 
     def dummy_excel(self, input_dir):
@@ -136,6 +152,7 @@ class DatasetProcessor:
                 print(f"\n[ !! ] Path {directory} not found.")
 
     def proc_dir(self, input_dir, final_size):
+        # path/filename.csv, data
         for file_path, data in self.get_csvs(input_dir):
             nan_check = np.isnan(data).any()
             flat_check = np.max(data) - np.min(data) < 0.2 or np.all(data == data[0])
@@ -147,11 +164,25 @@ class DatasetProcessor:
                 file_path, header=False, index=False
             )
         print("Mapping rhythms as integers")
+
+        """
+            Add extra column to label_map.xlsx
+            Column = dir
+
+            Final product
+
+            FileName/ Rhythm/ Dir
+
+            to load => read label.xlsx append paths as CSV_PATH/Dir/FileName.csv
+        """
+
         map_file = pathlib.Path(constants.XLSX_PATH).with_name("Label_Map.xlsx")
         shutil.copy(constants.XLSX_PATH, map_file)
+        # map_file = pathlib.Path(constants.ZIP_CONTENT_OUTPUT) / "Label_Map.xlsx"
         df = pd.read_excel(map_file, usecols=["FileName", "Rhythm"])
         df["Rhythm"] = df["Rhythm"].replace(constants.RHY_DICT)
         df = df[["FileName", "Rhythm"]]
+
         df.to_excel(map_file, index=False)
         self.dummy_excel(constants.XLSX_PATH)
         rm_dir_list = [constants.ZIP_CONTENT]
@@ -162,8 +193,8 @@ class DatasetProcessor:
 if __name__ == "__main__":
     start = time.time()
     pp = DatasetProcessor()
-    pp._extract(constants.ZIP_PATH, constants.PROJECT_DIR)
-    pp._extract(constants.ZIP_CONTENT, constants.ZIP_CONTENT_OUTPUT)
+    pp.extract(constants.ZIP_PATH, constants.PROJECT_DIR)
+    pp.extract(constants.ZIP_CONTENT, constants.ZIP_CONTENT_OUTPUT)
     pp.proc_dir(constants.CSV_PATH, constants.FINAL_SIZE)
     end = time.time() - start
     print(f"Execution Time : {end:.4f} seconds")
