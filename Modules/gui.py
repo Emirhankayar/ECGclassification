@@ -149,7 +149,6 @@ class App(QMainWindow):
             QMessageBox.critical(self, "Error", f"Label map not found at {label_path}")
             return
 
-        # TODO REMOVE PATIENT FROM THE LIST IF DIR DOES NOT EXIST
         label_df = pd.read_excel(label_path)
         self.label_df = label_df
         self.all_patients = label_df["FileName"].astype(str).tolist()
