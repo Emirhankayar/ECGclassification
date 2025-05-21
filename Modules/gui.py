@@ -149,6 +149,7 @@ class App(QMainWindow):
             QMessageBox.critical(self, "Error", f"Label map not found at {label_path}")
             return
 
+        # TODO REMOVE PATIENT FROM THE LIST IF DIR DOES NOT EXIST
         label_df = pd.read_excel(label_path)
         self.label_df = label_df
         self.all_patients = label_df["FileName"].astype(str).tolist()
@@ -193,7 +194,21 @@ class App(QMainWindow):
         )
 
         patient_file = f"{self.selected_patient}.csv"
-        data_path = pathlib.Path("Data/ECGDataDenoised") / patient_file
+
+        if self.selected_patient not in self.patient_dir_map:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Directory for patient '{self.selected_patient}' not found.",
+            )
+            return
+
+        data_path = self.patient_dir_map[self.selected_patient] / patient_file
+        if not data_path.exists():
+            QMessageBox.critical(
+                self, "Error", f"Patient data file not found at {data_path}"
+            )
+            return
 
         df = pd.read_csv(data_path, header=None)
         self.X_test = df.to_numpy()
@@ -325,12 +340,22 @@ class App(QMainWindow):
         self.dropdown_label.setText(f"Loaded Model: {selected_file}")
         self.model_dir.setText(f"Model Directory: {full_path}")
 
+    def min_max_normalize(self, data):
+        min_val = np.min(data)
+        max_val = np.max(data)
+        if max_val - min_val == 0:
+            return np.zeros_like(data, dtype=np.float32)
+        return ((data - min_val) / (max_val - min_val)).astype(np.float32)
+
     def evaluate_patient_data(self):
         if self.X_test is None or self.model is None:
             QMessageBox.warning(self, "Warning", "No patient data/Model loaded!")
             return
 
         patient_data = np.expand_dims(self.X_test, axis=0)
+        patient_data = self.min_max_normalize(patient_data[0])
+        patient_data = np.expand_dims(patient_data, axis=0)
+
         self.patient_data = patient_data
         prediction = self.model.predict(patient_data)
         predicted_class = np.argmax(prediction)

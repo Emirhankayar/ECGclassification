@@ -7,9 +7,6 @@ FINAL_SIZE = 5000 // DYNAMIC WINDOW SIZE (will be decided according to provided 
 
 FINAL_SIZE = 500
 
-"""
-"""
-
 PROJECT_DIR = pathlib.Path("./")
 
 ZIP_PATH = PROJECT_DIR / "Data.zip"

@@ -1,7 +1,6 @@
 import collections
 import os
 import sys
-
 import imblearn
 import keras_tuner
 import numpy as np
@@ -12,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath("Modules"))))
 import Modules.ds_loader as ds_loader
 
 dataset_loader = ds_loader.DatasetLoader(
-    xlsx_path="../Data/Label_Map.xlsx", data_dir="../Data/ECGDataDenoised"
+    xlsx_path="../Data/Label_Map.xlsx", data_dir="../Data/Internal_Dataset"
 )
 X, y = dataset_loader.load_data()
 X_train, X_temp, y_train, y_temp = sklearn.model_selection.train_test_split(
@@ -30,25 +29,28 @@ print(f"Class distribution of training before SMOTE: {collections.Counter(y_trai
 print(f"Class distribution of validation: {collections.Counter(y_val)}")
 print(f"Class distribution of test: {collections.Counter(y_test)}")
 
-print("\n[ ii ] Applying MinMax scaling to the dataset...")
-scaler = sklearn.preprocessing.MinMaxScaler()
-
-X_train_reshaped = X_train.reshape(-1, X_train.shape[-1])
-X_val_reshaped = X_val.reshape(-1, X_val.shape[-1])
-X_test_reshaped = X_test.reshape(-1, X_test.shape[-1])
-
 print(
     f"Before scaling - X_train shape: {X_train.shape}, X_val shape: {X_val.shape}, X_test shape: {X_test.shape}"
 )
 
-X_train_reshaped = scaler.fit_transform(X_train_reshaped)
-X_val_reshaped = scaler.transform(X_val_reshaped)
-X_test_reshaped = scaler.transform(X_test_reshaped)
 
-X_train = X_train_reshaped.reshape(X_train.shape[0], *X_train.shape[1:])
-X_val = X_val_reshaped.reshape(X_val.shape[0], *X_val.shape[1:])
-X_test = X_test_reshaped.reshape(X_test.shape[0], *X_test.shape[1:])
+def min_max_normalize(*datasets):
+    normalized_datasets = []
+    for data in datasets:
+        norm_data = []
+        for sample in data:
+            min_val = np.min(sample)
+            max_val = np.max(sample)
+            if max_val - min_val == 0:
+                norm_sample = np.zeros_like(sample, dtype=np.float32)
+            else:
+                norm_sample = (sample - min_val) / (max_val - min_val)
+            norm_data.append(norm_sample)
+        normalized_datasets.append(np.stack(norm_data, axis=0).astype(np.float32))
+    return normalized_datasets
 
+
+X_train, X_val, X_test = min_max_normalize(X_train, X_val, X_test)
 print(f"Min and Max of X_train: {np.min(X_train)}, {np.max(X_train)}")
 print(f"Min and Max of X_val: {np.min(X_val)}, {np.max(X_val)}")
 print(f"Min and Max of X_test: {np.min(X_test)}, {np.max(X_test)}")
@@ -60,34 +62,30 @@ smote = imblearn.over_sampling.SMOTE(random_state=42)
 X_resampled, y_train = smote.fit_resample(X_train_flat, y_train)
 X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
 print(f"Class distribution after SMOTE: {collections.Counter(y_train)}")
-INPUT_SIZE, LAYERS = 500, 3
-RDIR = f"../src/Results/RES_{INPUT_SIZE}_{LAYERS}"
-MDIR = f"../RES_{INPUT_SIZE}_{LAYERS}.keras"
-CDIR = f"../C_RES_{INPUT_SIZE}_{LAYERS}.keras"
+INPUT_SIZE, FILTERS = 500, 64
+RDIR = f"../src/Results/RES_{INPUT_SIZE}_{FILTERS}"
+MDIR = f"../RES_{INPUT_SIZE}_{FILTERS}.keras"
+CDIR = f"../C_RES_{INPUT_SIZE}_{FILTERS}.keras"
 CVDIR = f"../RES_{INPUT_SIZE}_CV.keras"
 
 from baseline import ResnetTuner
 
-# model = ResnetTuner()
-# model = model.build_model()
-# print(model.summary())
-
 tuner = keras_tuner.BayesianOptimization(
     ResnetTuner(),
     objective="val_accuracy",
-    max_trials=100,
+    max_trials=51,
     overwrite=False,
     directory=RDIR,
-    project_name=f"RES_{INPUT_SIZE}_{LAYERS}",
+    project_name=f"RES_{INPUT_SIZE}_{FILTERS}",
 )
 
 
 lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
-    monitor="val_loss", factor=0.1, patience=5, min_lr=1e-8, verbose=1
+    monitor="val_loss", factor=0.5, patience=10, min_lr=1e-7, verbose=1
 )
 
 early_stopping = tf.keras.callbacks.EarlyStopping(
-    monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
+    monitor="val_loss", patience=5, restore_best_weights=True, verbose=1
 )
 
 model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
@@ -97,7 +95,7 @@ model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
 tuner.search(
     X_train,
     y_train,
-    epochs=200,
+    epochs=300,
     validation_data=(X_val, y_val),
     callbacks=[lr_scheduler, early_stopping, model_checkpoint],
 )
@@ -111,16 +109,6 @@ print(model.summary())
 best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
 print(f"\n{best_hps.values}")
 
-
-"""history = model.fit(
-    X_train,
-    y_train,
-    epochs=200,
-    batch_size=32,
-    validation_data=(X_val, y_val),
-    callbacks=[lr_scheduler, early_stopping, model_checkpoint],
-)
-"""
 test_loss, test_accuracy = model.evaluate(X_test, y_test, batch_size=32)
 
 print(f"Test Loss: {test_loss}")
