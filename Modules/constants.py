@@ -19,7 +19,7 @@ ZIP_CONTENT_OUTPUT = PROJECT_DIR / "Data/"
 """
  MODELS DIR TO LOAD FOR GUI
 """
-MODELS_DIR = PROJECT_DIR / "src/Models"
+MODELS_DIR = PROJECT_DIR / "Models"
 """
  DO NOT MODIFY !
  This dict is for our target class

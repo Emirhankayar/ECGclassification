@@ -99,14 +99,12 @@ class ResnetTuner(keras_tuner.HyperModel):
             name=f"dropout_2",
         )(x)
 
-        #        x = tf.keras.layers.GlobalAveragePooling1D()(x)
         outputs = tf.keras.layers.Dense(4, activation="softmax")(x)
 
         model = tf.keras.models.Model(inputs, outputs)
 
         model.compile(
             optimizer=tf.keras.optimizers.Adam(
-                # learning_rate=hp.Choice("learning_rate", values=[1e-3, 1e-4, 1e-5]),
                 learning_rate=hp.Float(
                     "learning_rate", min_value=1e-5, max_value=9e-4, sampling="log"
                 ),
@@ -171,7 +169,6 @@ class Resnet:
         m_convolutions=4,
         n_convolutions=3,
         c_units=128,
-        # k_units=3,f
         p_size=2,
         d_units_1=128,
         dropout_1=0.3,
