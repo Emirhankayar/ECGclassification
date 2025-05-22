@@ -73,7 +73,7 @@ from baseline import ResnetTuner
 tuner = keras_tuner.BayesianOptimization(
     ResnetTuner(),
     objective="val_accuracy",
-    max_trials=51,
+    max_trials=100,
     overwrite=False,
     directory=RDIR,
     project_name=f"RES_{INPUT_SIZE}_{FILTERS}",

@@ -81,7 +81,7 @@ class ResnetTuner(keras_tuner.HyperModel):
         x = tf.keras.layers.Flatten(name="flatten")(x)
 
         x = tf.keras.layers.Dense(
-            hp.Choice(f"dense_units_1", [32]),
+            hp.Choice(f"dense_units_1", [64, 32]),
             activation="relu",
             name=f"fc_1",
         )(x)
@@ -90,7 +90,7 @@ class ResnetTuner(keras_tuner.HyperModel):
             name=f"dropout_1",
         )(x)
         x = tf.keras.layers.Dense(
-            hp.Choice(f"dense_units_2", [128]),
+            hp.Choice(f"dense_units_2", [64, 32]),
             activation="relu",
             name=f"fc_2",
         )(x)
