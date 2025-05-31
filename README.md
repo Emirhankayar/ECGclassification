@@ -16,7 +16,7 @@ Preprocessing involves denoising the signals, time-binning them to a fixed lengt
 </p>
 
 ## Final Pipeline
-The final prototype integrates the machine learning model into a cross-platform desktop application developed using PyQt5. The application offers a user-friendly graphical interface compatible with Linux, OSX, and Windows. 
+[The final prototype](https://github.com/Emirhankayar/MATECG-UI.git) integrates the machine learning model into a cross-platform desktop application developed using PyQt5. The application offers a user-friendly graphical interface compatible with Linux, OSX, and Windows. 
 
 ### Key functionalities:
 
