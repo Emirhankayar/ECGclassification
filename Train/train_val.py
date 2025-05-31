@@ -10,7 +10,7 @@ import numpy as np
 import sklearn
 import tensorflow as tf
 import train_constants as c
-from Train.model import Resnet, ResnetTuner
+from model import Resnet, ResnetTuner
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath("Modules"))))
 import Modules.ds_loader as ds_loader
@@ -134,11 +134,11 @@ for model_idx in range(c.NUM_MODELS):
         )
 
     lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss", factor=0.5, patience=3, min_lr=1e-8, verbose=1
+        monitor="val_loss", factor=0.5, patience=2, min_lr=1e-8, verbose=1
     )
 
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=5, restore_best_weights=True, verbose=1
+        monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
     )
 
     model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
