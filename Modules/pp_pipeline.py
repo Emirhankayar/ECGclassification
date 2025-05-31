@@ -4,7 +4,6 @@ import pathlib
 import shutil
 import time
 import zipfile
-import sklearn
 import numpy as np
 import pandas as pd
 

@@ -1,5 +1,6 @@
 import collections
 import os
+import pathlib
 import sys
 import imblearn
 import keras_tuner
@@ -11,15 +12,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath("Modules"))))
 import Modules.ds_loader as ds_loader
 
 dataset_loader = ds_loader.DatasetLoader(
-    xlsx_path="../Data/Label_Map.xlsx", data_dir="../Data/Internal_Dataset"
+    xlsx_path="../Data/Internal_Dataset/Label_Map.xlsx",
+    data_dir="../Data/Internal_Dataset",
 )
 X, y = dataset_loader.load_data()
 X_train, X_temp, y_train, y_temp = sklearn.model_selection.train_test_split(
-    X, y, test_size=0.3, random_state=42, shuffle=True
+    X, y, test_size=0.2, random_state=42, shuffle=True
 )
 
 X_val, X_test, y_val, y_test = sklearn.model_selection.train_test_split(
-    X_temp, y_temp, test_size=0.5, random_state=42, shuffle=True
+    X_temp, y_temp, test_size=0.25, random_state=42, shuffle=True
 )
 print("Unique classes in y:", np.unique(y_train))
 print("Datatype:", (X_train.dtype), (y_train.dtype))
@@ -62,26 +64,25 @@ smote = imblearn.over_sampling.SMOTE(random_state=42)
 X_resampled, y_train = smote.fit_resample(X_train_flat, y_train)
 X_train = X_resampled.reshape((-1, *X_train.shape[1:]))
 print(f"Class distribution after SMOTE: {collections.Counter(y_train)}")
-INPUT_SIZE, FILTERS = 500, 64
-RDIR = f"../src/Results/RES_{INPUT_SIZE}_{FILTERS}"
-MDIR = f"../RES_{INPUT_SIZE}_{FILTERS}.keras"
-CDIR = f"../C_RES_{INPUT_SIZE}_{FILTERS}.keras"
-CVDIR = f"../RES_{INPUT_SIZE}_CV.keras"
 
-from baseline import ResnetTuner
+INPUT_SIZE, FILTERS = 500, 64
+RDIR = pathlib.Path(f"Results/RES_{INPUT_SIZE}_{FILTERS}_09")
+MDIR = RDIR / f"RES_{INPUT_SIZE}_{FILTERS}.keras"
+CDIR = RDIR / f"RES_{INPUT_SIZE}_{FILTERS}_CHECKPOINT.keras"
+
+from Train.model import ResnetTuner
 
 tuner = keras_tuner.BayesianOptimization(
     ResnetTuner(),
-    objective="val_accuracy",
-    max_trials=100,
+    objective="val_loss",
+    max_trials=300,
     overwrite=False,
     directory=RDIR,
     project_name=f"RES_{INPUT_SIZE}_{FILTERS}",
 )
 
-
 lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
-    monitor="val_loss", factor=0.5, patience=10, min_lr=1e-7, verbose=1
+    monitor="val_loss", factor=0.5, patience=2, min_lr=1e-8, verbose=1
 )
 
 early_stopping = tf.keras.callbacks.EarlyStopping(
@@ -89,7 +90,7 @@ early_stopping = tf.keras.callbacks.EarlyStopping(
 )
 
 model_checkpoint = tf.keras.callbacks.ModelCheckpoint(
-    filepath=CDIR, monitor="val_accuracy", save_best_only=True, verbose=1
+    filepath=CDIR, monitor="val_loss", save_best_only=True, verbose=1
 )
 
 tuner.search(
@@ -132,4 +133,4 @@ y_train_pred = np.argmax(y_train_pred, axis=1)
 
 print("Classification Report (Train Data):")
 print(sklearn.metrics.classification_report(y_train, y_train_pred))
-model.save(MDIR)
+model.save(MDIR, include_optimizer=False)

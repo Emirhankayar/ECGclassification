@@ -13,7 +13,6 @@ class DatasetLoader:
     split train + val + test ++
     last touches (minmax) ++
     move test to a separate dir
-    Data/ECGDataDenoised/Test
     """
 
     def __init__(self, xlsx_path, data_dir):
@@ -41,8 +40,3 @@ class DatasetLoader:
         y = np.array(y, dtype=np.int32)
 
         return X, y
-
-
-# Example usage:
-# dataset_loader = DatasetLoader(xlsx_path='path_to_label_file.xlsx', data_dir='path_to_data_directory')
-# X, y = dataset_loader.load_data()

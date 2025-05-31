@@ -1,5 +1,4 @@
 import gc
-
 import keras_tuner
 import tensorflow as tf
 
@@ -10,7 +9,7 @@ class ResnetTuner(keras_tuner.HyperModel):
     def residual_block(
         self, x, f_units, k_units, p_size, n_convolutions, name_prefix="res"
     ):
-        # shortcut = x
+        shortcut = x
         for i in range(n_convolutions):
             x = tf.keras.layers.Conv1D(
                 filters=f_units,
@@ -23,7 +22,6 @@ class ResnetTuner(keras_tuner.HyperModel):
             x = tf.keras.layers.BatchNormalization(name=f"{name_prefix}_bn_{i+2}")(x)
             x = tf.keras.layers.ReLU(name=f"{name_prefix}_relu_{i+2}")(x)
 
-        """
         if shortcut.shape[-1] != f_units:
             shortcut = tf.keras.layers.Conv1D(
                 filters=f_units,
@@ -36,30 +34,27 @@ class ResnetTuner(keras_tuner.HyperModel):
         x = tf.keras.layers.add([x, shortcut])
         x = tf.keras.layers.BatchNormalization(name=f"{name_prefix}_bn_")(x)
         x = tf.keras.layers.ReLU(name=f"{name_prefix}_relu_")(x)
-        """
+
         x = tf.keras.layers.MaxPooling1D(
             pool_size=p_size, strides=2, name=f"{name_prefix}_mp"
         )(x)
         return x
 
     def build(self, hp):
-        tf.keras.mixed_precision.set_global_policy("mixed_float16")
         gc.collect()
         tf.keras.backend.clear_session()
-
+        tf.keras.mixed_precision.set_global_policy("mixed_float16")
         # HYPERPARAMS
-        f_units = hp.Choice("f_units", [64])
-        p_size = 5
-        n_convolutions = hp.Int("n_convolutions", min_value=1, max_value=5, step=1)
-        # n_convolutions = 3
-        # m_convolutions = 4
-        m_convolutions = hp.Int("m_convolutions", min_value=1, max_value=5, step=1)
+        f_units = hp.Choice("f_units", [32])
+        p_size = hp.Choice("p_size", [2, 3, 5])
+        n_convolutions = hp.Int("n_convolutions", min_value=1, max_value=3, step=1)
+        m_convolutions = hp.Int("m_convolutions", min_value=2, max_value=3, step=1)
         inputs = tf.keras.layers.Input(shape=(500, 12))
 
         # FIRST CONVOLUTION
         x = tf.keras.layers.Conv1D(
             filters=f_units,
-            kernel_size=3,
+            kernel_size=hp.Choice("kernel_size_init", [3]),
             strides=2,
             kernel_initializer="he_normal",
             padding="same",
@@ -71,31 +66,32 @@ class ResnetTuner(keras_tuner.HyperModel):
             x = self.residual_block(
                 x,
                 f_units=f_units,
-                k_units=3,
+                k_units=hp.Choice("kernel_size_res", [3]),
                 p_size=p_size,
                 n_convolutions=n_convolutions,
                 name_prefix=f"res_{i+1}",
             )
+            f_units *= hp.Choice("coefficient", [1])
 
         # CLASSIFIER
         x = tf.keras.layers.Flatten(name="flatten")(x)
 
         x = tf.keras.layers.Dense(
-            hp.Choice(f"dense_units_1", [64, 32]),
+            hp.Choice(f"dense_units_1", [32, 64]),
             activation="relu",
             name=f"fc_1",
         )(x)
         x = tf.keras.layers.Dropout(
-            hp.Float(f"dropout_1", min_value=0.25, max_value=0.5, step=0.05),
+            hp.Float(f"dropout_1", min_value=0.3, max_value=0.5, step=0.05),
             name=f"dropout_1",
         )(x)
         x = tf.keras.layers.Dense(
-            hp.Choice(f"dense_units_2", [64, 32]),
+            hp.Choice(f"dense_units_2", [32, 64]),
             activation="relu",
             name=f"fc_2",
         )(x)
         x = tf.keras.layers.Dropout(
-            hp.Float(f"dropout_2", min_value=0.25, max_value=0.5, step=0.05),
+            hp.Float(f"dropout_2", min_value=0.3, max_value=0.5, step=0.05),
             name=f"dropout_2",
         )(x)
 
@@ -105,12 +101,8 @@ class ResnetTuner(keras_tuner.HyperModel):
 
         model.compile(
             optimizer=tf.keras.optimizers.Adam(
-                learning_rate=hp.Float(
-                    "learning_rate", min_value=1e-5, max_value=9e-4, sampling="log"
-                ),
-                weight_decay=hp.Float(
-                    "weight_decay", min_value=1e-6, max_value=1e-2, sampling="log"
-                ),
+                learning_rate=hp.Float("learning_rate", min_value=1e-5, max_value=1e-2),
+                weight_decay=hp.Float("weight_decay", min_value=1e-6, max_value=1e-2),
             ),
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"],
@@ -133,7 +125,7 @@ class Resnet:
     def residual_block(
         self, x, c_units, k_units, p_size, n_convolutions, name_prefix="res"
     ):
-        # shortcut = x
+        shortcut = x
 
         for i in range(n_convolutions):
             x = tf.keras.layers.Conv1D(
@@ -146,7 +138,7 @@ class Resnet:
             )(x)
             x = tf.keras.layers.BatchNormalization(name=f"{name_prefix}_bn_{i+2}")(x)
             x = tf.keras.layers.ReLU(name=f"{name_prefix}_relu_{i+2}")(x)
-        """
+
         if shortcut.shape[-1] != c_units:
             shortcut = tf.keras.layers.Conv1D(
                 filters=c_units,
@@ -158,7 +150,9 @@ class Resnet:
             )(shortcut)
 
         x = tf.keras.layers.add([x, shortcut])
-        """
+        x = tf.keras.layers.BatchNormalization(name=f"{name_prefix}_bn_")(x)
+        x = tf.keras.layers.ReLU(name=f"{name_prefix}_relu_")(x)
+
         x = tf.keras.layers.MaxPooling1D(
             pool_size=p_size, strides=2, name=f"{name_prefix}_mp"
         )(x)
@@ -169,7 +163,10 @@ class Resnet:
         m_convolutions=4,
         n_convolutions=3,
         c_units=128,
+        k_units_1=3,
+        k_units_2=3,
         p_size=2,
+        coefficient=1,
         d_units_1=128,
         dropout_1=0.3,
         d_units_2=64,
@@ -186,7 +183,7 @@ class Resnet:
 
         x = tf.keras.layers.Conv1D(
             filters=c_units,
-            kernel_size=3,
+            kernel_size=k_units_1,
             strides=2,
             padding="same",
             kernel_initializer="he_normal",
@@ -200,11 +197,12 @@ class Resnet:
             x = self.residual_block(
                 x,
                 c_units=c_units,
-                k_units=3,
+                k_units=k_units_2,
                 p_size=p_size,
                 n_convolutions=n_convolutions,
                 name_prefix=f"res_{i+1}",
             )
+            c_units *= coefficient
 
         x = tf.keras.layers.Flatten(name="flatten")(x)
 
@@ -217,7 +215,6 @@ class Resnet:
         outputs = tf.keras.layers.Dense(4, activation="softmax", dtype="float32")(x)
 
         model = tf.keras.Model(inputs, outputs)
-
         optimizer = tf.keras.optimizers.Adam(
             learning_rate=learning_rate,
             weight_decay=weight_decay,
